@@ -1,0 +1,24 @@
+---
+title: "Wikipedia Ancient Battles: Project Plan"
+subtitle: "Article Crawling, Network Analysis, and Topic Modeling"
+author: ""
+date: last-modified
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Project Overview
+
+This project will pull in wikipedia articles battles from 300BC until 500 AD across the entire world.  These articles will then be web crawled, so that every connected article will be pulled into the dataset.  
+
+Once the articles are collected, the articles will be transformed into a network diagram to better understand how they connect with each other.  
+
+Then a topic model will be applied to this corpus of articles
