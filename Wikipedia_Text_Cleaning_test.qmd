@@ -1,0 +1,268 @@
+---
+title: "Wikipedia Article Text Cleaning — Test"
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+jupyter: python3
+---
+
+# Set Up
+
+## Libraries
+```{python}
+# Libraries
+import re
+import unicodedata
+from pathlib import Path
+
+import polars as pl
+
+```
+
+## Define File Paths
+
+```{python}
+# File paths
+DATA_DIR = Path("data/wikipedia_test")
+
+ARTICLES_FILE = DATA_DIR / "articles.jsonl"
+CLEANED_FILE = DATA_DIR / "cleaned_articles.parquet"
+
+# Confirm that the raw article file exists
+if not ARTICLES_FILE.exists():
+    raise FileNotFoundError(
+        f"Could not find the raw article file: {ARTICLES_FILE.resolve()}"
+    )
+
+print(f"Reading articles from: {ARTICLES_FILE.resolve()}")
+print(f"Cleaned output will be saved to: {CLEANED_FILE.resolve()}")
+
+```
+
+
+## Load the raw articles
+
+```{python}
+# Load raw article records
+articles_df = pl.read_ndjson(ARTICLES_FILE)
+
+# Inspect the dataset
+print(f"Articles loaded: {articles_df.height:,}")
+print(f"Columns: {articles_df.columns}")
+
+display(articles_df.head(5))
+
+
+```
+
+
+## Validate the data
+
+```{python}
+# Check required column
+if "text" not in articles_df.columns:
+    raise ValueError(
+        "The raw article file does not contain the expected 'text' column."
+    )
+
+# Check for missing article text
+missing_text = articles_df.filter(
+    pl.col("text").is_null()
+).height
+
+print(f"Articles with missing text: {missing_text}")
+
+```
+
+
+# Cleaning
+
+## Cleaning Function
+
+```{python}
+def clean_article_text(text):
+    """
+    Apply conservative formatting cleanup to one Wikipedia article.
+    Remove references and bibliography sections and everything after them.
+    """
+
+    if text is None:
+        return ""
+
+    # Normalize Unicode characters
+    text = unicodedata.normalize("NFKC", text)
+
+    # Standardize whitespace and apostrophes
+    text = text.replace("\u00a0", " ")
+    text = text.replace("’", "'")
+
+    # Identify headings that indicate the beginning of references
+    reference_headings = {
+        "references",
+        "bibliography",
+        "citations",
+        "notes and references",
+        "notes",
+        "sources"
+    }
+
+    # Split article into lines
+    lines = text.splitlines()
+
+    cleaned_lines = []
+
+    for line in lines:
+
+        # Normalize heading text for comparison
+        heading = line.strip().strip("=").strip()
+        heading = heading.lower()
+
+        # Stop processing when a reference-related heading is found
+        if heading in reference_headings:
+            break
+
+        cleaned_lines.append(line)
+
+    # Reassemble article text
+    text = "\n".join(cleaned_lines)
+
+    # Remove numeric citation markers, such as [1] or [2, 3]
+    text = re.sub(
+        r"\[\s*\d+(?:\s*[,;–-]\s*\d+)*\s*\]",
+        " ",
+        text
+    )
+
+    # Remove common editorial markers
+    text = re.sub(
+        r"\[(?:citation needed|clarification needed|verification needed)\]",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # Remove URLs
+    text = re.sub(r"https?://\S+", " ", text)
+
+    # Remove residual HTML tags
+    text = re.sub(r"<[^>]+>", " ", text)
+
+    # Normalize whitespace while preserving paragraph breaks
+    lines = []
+
+    for line in text.splitlines():
+        line = re.sub(r"\s+", " ", line).strip()
+
+        if line:
+            lines.append(line)
+
+    text = "\n\n".join(lines)
+
+    return text.strip()
+
+```
+
+## Test the function on one article
+
+```{python}
+# Select the first article
+example_text = articles_df["text"][0]
+
+# Apply cleaning
+example_cleaned_text = clean_article_text(example_text)
+
+print("--- ORIGINAL TEXT ---\n")
+print(example_text[:2000])
+
+print("\n--- CLEANED TEXT ---\n")
+print(example_cleaned_text[:2000])
+
+print("Original characters:", len(example_text))
+print("Cleaned characters:", len(example_cleaned_text))
+print(
+    "Characters removed:",
+    len(example_text) - len(example_cleaned_text)
+)
+
+```
+
+
+## Apply cleaning to all articles
+
+```{python}
+# Apply cleaning to every article
+cleaned_texts = [
+    clean_article_text(text)
+    for text in articles_df["text"].to_list()
+]
+
+# Add cleaned text to the original dataset
+cleaned_articles_df = articles_df.with_columns(
+    pl.Series("cleaned_text", cleaned_texts)
+)
+
+# Calculate text-length statistics
+cleaned_articles_df = cleaned_articles_df.with_columns(
+    pl.col("text")
+    .str.len_chars()
+    .fill_null(0)
+    .alias("original_characters"),
+
+    pl.col("cleaned_text")
+    .str.len_chars()
+    .alias("cleaned_characters")
+)
+
+cleaned_articles_df = cleaned_articles_df.with_columns(
+    (
+        pl.col("original_characters") -
+        pl.col("cleaned_characters")
+    ).alias("characters_removed")
+)
+
+print(f"Articles cleaned: {cleaned_articles_df.height:,}")
+
+```
+
+### Inspect the cleaning results
+
+```{python}
+# Create an article cleaning summary
+cleaning_summary_df = (
+    cleaned_articles_df
+    .select([
+        "title",
+        "page_id",
+        "original_characters",
+        "cleaned_characters",
+        "characters_removed"
+    ])
+    .sort("characters_removed", descending=True)
+)
+
+display(cleaning_summary_df)
+
+```
+
+### Overall impact of cleaning
+
+```{python}
+# Calculate overall cleaning statistics
+total_original = cleaned_articles_df["original_characters"].sum()
+total_cleaned = cleaned_articles_df["cleaned_characters"].sum()
+total_removed = total_original - total_cleaned
+
+percentage_removed = (
+    (total_removed / total_original) * 100
+    if total_original > 0
+    else 0
+)
+
+print(f"Total original characters: {total_original:,}")
+print(f"Total cleaned characters: {total_cleaned:,}")
+print(f"Total characters removed: {total_removed:,}")
+print(f"Percentage removed: {percentage_removed:.2f}%")
+
+```

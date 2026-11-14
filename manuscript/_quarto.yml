@@ -1,0 +1,17 @@
+project:
+  type: manuscript
+  output-dir: _output
+
+manuscript:
+  article: index.qmd
+
+execute:
+  freeze: auto
+
+format:
+  html:
+    toc: true
+    number-sections: true
+    embed-resources: true
+
+  docx: default

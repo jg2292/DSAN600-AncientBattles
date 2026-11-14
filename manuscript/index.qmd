@@ -1,0 +1,95 @@
+---
+title: "Semantic and Network Relationships in Wikipedia's Ancient Battle Articles"
+
+author:
+  - name: "John Grace"
+    affiliation: "Georgetown University"
+
+date: today
+
+abstract: |
+  This study investigates the relationship between semantic similarity
+  and hyperlink network proximity among Wikipedia articles concerning
+  ancient battles and their historical context. Using Latent Dirichlet
+  Allocation (LDA), articles are represented as probability distributions
+  over latent topics. These representations are compared with distances
+  derived from Wikipedia's hyperlink network.
+
+keywords:
+  - Wikipedia
+  - Ancient battles
+  - Network analysis
+  - Topic modeling
+  - Latent Dirichlet Allocation
+  - Semantic distance
+
+bibliography: references.bib
+---
+
+# Introduction
+
+## Research Question
+
+To what extent does Wikipedia's hyperlink network reflect the semantic
+relationships between articles about ancient battles?
+
+## Research Objectives
+
+1. Construct a collection of Wikipedia articles concerning ancient battles
+   and their historical context.
+2. Use Latent Dirichlet Allocation to represent articles as topic
+   distributions.
+3. Construct a hyperlink network from the collected articles.
+4. Calculate semantic and network distances between article pairs.
+5. Evaluate the relationship between semantic similarity and network
+   proximity.
+
+# Background
+
+## Wikipedia as a Knowledge Network
+
+## Topic Modeling and Semantic Similarity
+
+## Network Distance
+
+# Data Collection
+
+## Seed Article Selection
+
+## Wikipedia Article Collection
+
+## Link Collection and Resolution
+
+# Methodology
+
+## Text Preprocessing
+
+## Latent Dirichlet Allocation
+
+## Hyperlink Network Construction
+
+## Semantic Distance Calculation
+
+## Network Distance Calculation
+
+## Statistical Comparison
+
+# Results
+
+## Collection Summary
+
+## LDA Topic Results
+
+## Network Structure
+
+## Semantic and Network Distance Comparison
+
+# Discussion
+
+## Interpretation of Findings
+
+## Limitations
+
+# Conclusion
+
+# References
