@@ -1,0 +1,222 @@
+---
+title: "Ancient Battles — Wikidata Collection"
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+jupyter: python3
+---
+
+# Overview
+
+This document creates an initial collection of ancient battles from Wikidata.
+
+The output is a CSV containing one row per battle with its Wikidata identifier, English name, date information, and English Wikipedia article URL. The CSV will be used as the input for the next stage of the project: collecting and scraping the linked Wikipedia articles.
+
+This stage does **not** scrape Wikipedia, collect coordinates, or enrich location and participant entities.
+
+## Collection settings
+
+The initial date window below preserves the range used in the earlier project: 300 BCE through 500 CE. This is a configurable starting definition of the ancient period, not a universal definition of antiquity.
+
+The query looks for Wikidata items whose instance-of property (`P31`) is `Q178561` (battle) and that have an English Wikipedia article.
+
+```{python}
+# Date window: start inclusive, end exclusive
+START_DATE = "-0300-01-01T00:00:00Z"
+END_DATE = "0501-01-01T00:00:00Z"
+
+# Maximum number of result rows returned by this initial query.
+# Review the result count before deciding whether to increase this.
+RESULT_LIMIT = 1000
+
+OUTPUT_FILE = "ancient_battle_candidates.csv"
+```
+
+# Libraries and connection
+
+```{python}
+import requests
+import pandas as pd
+```
+
+```{python}
+SPARQL_URL = "https://query.wikidata.org/sparql"
+
+HEADERS = {
+    "User-Agent": (
+        "AncientBattlesCollector/1.0 "
+        "(academic research project)"
+    )
+}
+```
+
+# Candidate discovery
+
+The SPARQL query retrieves the Wikidata item ID, English label, date statements, and English Wikipedia article URL.
+
+The English Wikipedia article is required because this CSV will seed the article-collection stage. Battles without an English Wikipedia article are not included in this output.
+
+```{python}
+query = f"""
+SELECT DISTINCT
+    ?event
+    ?eventLabel
+    ?date
+    ?article
+    ?participants
+    ?location
+    ?locationLabel
+    ?coordinates
+WHERE {{
+    ?event wdt:P31 wd:Q178561 ;
+           wdt:P585 ?date .
+
+    FILTER(
+        ?date >= "{START_DATE}"^^xsd:dateTime
+        &&
+        ?date < "{END_DATE}"^^xsd:dateTime
+    )
+
+    # English Wikipedia article
+    ?article schema:about ?event ;
+             schema:isPartOf <https://en.wikipedia.org/> .
+
+    # Participants
+    OPTIONAL {{
+        ?event wdt:P710 ?participants .
+    }}
+
+    # Linked location
+    OPTIONAL {{
+        ?event wdt:P276 ?location .
+    }}
+
+    # Location label
+    OPTIONAL {{
+        ?location rdfs:label ?locationLabel .
+        FILTER(LANG(?locationLabel) = "en")
+    }}
+
+    # Coordinates recorded directly on the battle
+    OPTIONAL {{
+        ?event wdt:P625 ?coordinates .
+    }}
+
+    SERVICE wikibase:label {{
+        bd:serviceParam wikibase:language "en" .
+    }}
+}}
+ORDER BY ?event ?date
+LIMIT {RESULT_LIMIT}
+"""
+```
+
+```{python}
+response = requests.get(
+    SPARQL_URL,
+    params={
+        "query": query,
+        "format": "json"
+    },
+    headers=HEADERS,
+    timeout=90
+)
+
+print("HTTP status:", response.status_code)
+response.raise_for_status()
+
+results = response.json()["results"]["bindings"]
+
+print("Rows returned by Wikidata:", len(results))
+```
+
+# Convert results into a DataFrame
+
+Wikidata can contain more than one date statement for an item. This step combines multiple date values into one field and keeps one row per Wikidata item.
+
+```{python}
+candidate_rows = []
+
+for result in results:
+    candidate_rows.append({
+        "wikidata_id": result["event"]["value"].rsplit("/", 1)[-1],
+        "name": result.get("eventLabel", {}).get("value"),
+        "date": result.get("date", {}).get("value"),
+        "wikipedia_url": result["article"]["value"]
+    })
+
+raw_candidates_df = pd.DataFrame(candidate_rows)
+
+if raw_candidates_df.empty:
+    candidates_df = pd.DataFrame(
+        columns=["wikidata_id", "name", "date", "wikipedia_url"]
+    )
+else:
+    candidates_df = (
+        raw_candidates_df
+        .groupby(
+            ["wikidata_id", "name", "wikipedia_url"],
+            as_index=False,
+            dropna=False
+        )
+        .agg({
+            "date": lambda dates: "; ".join(
+                sorted(set(dates.dropna().astype(str)))
+            )
+        })
+    )
+
+candidates_df = candidates_df.sort_values(
+    ["date", "name"],
+    na_position="last"
+).reset_index(drop=True)
+
+print("Unique battles:", candidates_df["wikidata_id"].nunique())
+print("Unique Wikipedia articles:", candidates_df["wikipedia_url"].nunique())
+
+candidates_df.head(10)
+```
+
+# Review the collection
+
+```{python}
+print("Total battle records:", len(candidates_df))
+print("Missing Wikidata IDs:", candidates_df["wikidata_id"].isna().sum())
+print("Missing names:", candidates_df["name"].isna().sum())
+print("Missing Wikipedia URLs:", candidates_df["wikipedia_url"].isna().sum())
+print(
+    "Duplicate Wikidata IDs:",
+    candidates_df["wikidata_id"].duplicated().sum()
+)
+
+display(candidates_df.head(25))
+```
+
+Check for duplicate article URLs. Multiple Wikidata items can occasionally point to the same Wikipedia article.
+
+```{python}
+duplicate_urls = candidates_df[
+    candidates_df["wikipedia_url"].duplicated(keep=False)
+].sort_values("wikipedia_url")
+
+print("Rows involved in duplicate Wikipedia URLs:", len(duplicate_urls))
+display(duplicate_urls)
+```
+
+# Export CSV
+
+The exported file contains one row per Wikidata battle item. The `wikipedia_url` column will be used as the starting list for the Wikipedia crawler.
+
+```{python}
+candidates_df.to_csv(
+    OUTPUT_FILE,
+    index=False,
+    encoding="utf-8-sig"
+)
+
+print(f"Exported {len(candidates_df)} battles to {OUTPUT_FILE}")
+```
+
+

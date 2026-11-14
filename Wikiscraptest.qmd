@@ -1,0 +1,489 @@
+---
+title: "Ancient Battles — Wikipedia Article Collection"
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+jupyter: python3
+---
+
+
+# Libraries
+
+
+```{python}
+import json
+import time
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+import polars as pl
+import requests
+
+```
+
+
+# Configure the test
+
+```{python}
+# Input file
+INPUT_FILE = Path("ancient_battle_candidates.csv")
+
+# Local output directory
+OUTPUT_DIR = Path("data/wikipedia_test")
+
+# Output files
+ARTICLES_FILE = OUTPUT_DIR / "articles.jsonl"
+LINKS_FILE = OUTPUT_DIR / "article_links.parquet"
+
+# Test configuration
+SEED_LIMIT = 10
+CRAWL_DEPTH = 0
+MAX_ARTICLES = 10
+
+# Wikipedia API settings
+WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
+USER_AGENT = "AncientBattlesCollector/1.0 (academic research project)"
+
+REQUEST_PAUSE = 0.5
+MAX_RETRIES = 5
+REQUEST_TIMEOUT = 60
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+```
+
+# Read the CSV and select 10 unique articles
+
+```{python}
+# Read the candidate CSV
+candidates_df = pl.read_csv(INPUT_FILE)
+
+# Make sure the required column exists
+if "wikipedia_url" not in candidates_df.columns:
+    raise ValueError("The CSV does not contain a wikipedia_url column.")
+
+# Remove missing and blank URLs
+candidates_df = (
+    candidates_df
+    .filter(pl.col("wikipedia_url").is_not_null())
+    .with_columns(
+        pl.col("wikipedia_url")
+        .cast(pl.String)
+        .str.strip_chars()
+    )
+    .filter(pl.col("wikipedia_url") != "")
+)
+
+# Keep only one row per unique Wikipedia article
+article_candidates_df = (
+    candidates_df
+    .unique(
+        subset=["wikipedia_url"],
+        keep="first",
+        maintain_order=True
+    )
+    .head(SEED_LIMIT)
+)
+
+print("Rows with valid URLs:", len(candidates_df))
+print("Unique articles selected:", len(article_candidates_df))
+
+# Display the selected articles
+display(
+    article_candidates_df.select([
+        col for col in [
+            "wikidata_id",
+            "name",
+            "date",
+            "wikipedia_url"
+        ]
+        if col in article_candidates_df.columns
+    ])
+)
+
+```
+
+# Convert the URLs into Wikipedia article titles
+
+```{python}
+def wikipedia_url_to_title(url):
+
+    parsed_url = urlparse(url)
+
+    if parsed_url.netloc.lower() != "en.wikipedia.org":
+        raise ValueError(f"Unexpected Wikipedia domain: {url}")
+
+    if not parsed_url.path.startswith("/wiki/"):
+        raise ValueError(f"Unexpected Wikipedia URL format: {url}")
+
+    title = parsed_url.path.removeprefix("/wiki/")
+
+    return unquote(title).replace("_", " ")
+
+
+# Convert each URL into its requested Wikipedia article title
+article_candidates_df = article_candidates_df.with_columns(
+    pl.col("wikipedia_url")
+    .map_elements(
+        wikipedia_url_to_title,
+        return_dtype=pl.String
+    )
+    .alias("requested_title")
+)
+
+display(
+    article_candidates_df.select([
+        "requested_title",
+        "wikipedia_url"
+    ])
+)
+
+```
+
+
+# Create the Wikipedia API connection
+
+```{python}
+session = requests.Session()
+
+session.headers.update({
+    "User-Agent": USER_AGENT
+})
+
+
+def wikipedia_api_get(params):
+
+    for attempt in range(1, MAX_RETRIES + 1):
+
+        try:
+            response = session.get(
+                WIKIPEDIA_API,
+                params=params,
+                timeout=REQUEST_TIMEOUT
+            )
+
+            if response.status_code in [429, 500, 502, 503, 504]:
+
+                if attempt == MAX_RETRIES:
+                    response.raise_for_status()
+
+                wait = min(2 ** attempt, 60)
+
+                print(
+                    f"Temporary error {response.status_code}. "
+                    f"Retrying in {wait} seconds."
+                )
+
+                time.sleep(wait)
+                continue
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            if "error" in data:
+                raise RuntimeError(data["error"])
+
+            return data
+
+        except requests.RequestException:
+
+            if attempt == MAX_RETRIES:
+                raise
+
+            time.sleep(min(2 ** attempt, 60))
+
+    raise RuntimeError("Wikipedia request failed.")
+
+```
+
+
+# Write the article retrieval function
+
+```{python}
+def retrieve_article(title, source_url):
+
+    params = {
+        "action": "query",
+        "format": "json",
+        "formatversion": 2,
+        "redirects": 1,
+        "prop": "extracts|links",
+        "explaintext": 1,
+        "exsectionformat": "plain",
+        "plnamespace": 0,
+        "pllimit": "max",
+        "titles": title
+    }
+
+    data = wikipedia_api_get(params)
+
+    pages = data["query"]["pages"]
+
+    if not pages or pages[0].get("missing"):
+        raise ValueError(f"Article not found: {title}")
+
+    page = pages[0]
+
+    # Extract the first batch of outgoing links
+    outgoing_links = [
+        link["title"]
+        for link in page.get("links", [])
+    ]
+
+    # Retrieve remaining links if Wikipedia paginates the results
+    while "continue" in data:
+
+        params.update(data["continue"])
+
+        time.sleep(REQUEST_PAUSE)
+
+        data = wikipedia_api_get(params)
+
+        pages = data["query"]["pages"]
+
+        outgoing_links.extend([
+            link["title"]
+            for link in pages[0].get("links", [])
+        ])
+
+    # Remove duplicate links while preserving order
+    outgoing_links = list(dict.fromkeys(outgoing_links))
+
+    return {
+        "page_id": page.get("pageid"),
+        "title": page.get("title"),
+        "source_url": source_url,
+        "text": page.get("extract", ""),
+        "outgoing_links": outgoing_links,
+        "outgoing_link_count": len(outgoing_links)
+    }
+
+```
+
+
+# Download the 10 articles
+
+```{python}
+article_records = []
+link_records = []
+
+# Download the selected articles
+for index, row in enumerate(
+    article_candidates_df.iter_rows(named=True),
+    start=1
+):
+
+    title = row["requested_title"]
+    source_url = row["wikipedia_url"]
+
+    print(f"[{index}/{len(article_candidates_df)}] Downloading: {title}")
+
+    try:
+
+        article = retrieve_article(
+            title=title,
+            source_url=source_url
+        )
+
+        # Preserve original Wikidata metadata
+        for column in ["wikidata_id", "name", "date"]:
+
+            value = row.get(column)
+
+            if value is not None:
+
+                # Convert date values to strings for JSON compatibility
+                if column == "date":
+                    value = str(value)
+
+                article[column] = value
+
+        # Store article text and metadata
+        article_records.append(article)
+
+        # Store each outgoing link as a separate network edge
+        for linked_title in article["outgoing_links"]:
+
+            link_records.append({
+                "source_page_id": article["page_id"],
+                "source_title": article["title"],
+                "target_title": linked_title
+            })
+
+        print(
+            f"  Retrieved {len(article['text']):,} characters "
+            f"and {article['outgoing_link_count']:,} outgoing links."
+        )
+
+    except Exception as error:
+
+        print(f"  ERROR: {error}")
+
+    time.sleep(REQUEST_PAUSE)
+
+
+# Collection summary
+print("\nCollection finished.")
+print("Articles successfully retrieved:", len(article_records))
+
+
+# Save all successfully retrieved articles
+with ARTICLES_FILE.open("w", encoding="utf-8") as file:
+
+    for article in article_records:
+
+        file.write(
+            json.dumps(article, ensure_ascii=False) + "\n"
+        )
+
+print("Article data saved to:", ARTICLES_FILE)
+```
+
+
+# Save and inspect the link data
+
+```{python}
+# Convert the collected link records into a Polars DataFrame
+if link_records:
+
+    links_df = pl.DataFrame(link_records)
+
+else:
+
+    # Preserve the expected columns even if no links were collected
+    links_df = pl.DataFrame(
+        schema={
+            "source_page_id": pl.Int64,
+            "source_title": pl.String,
+            "target_title": pl.String
+        }
+    )
+
+
+# Save the link data as Parquet
+links_df.write_parquet(LINKS_FILE)
+
+print("Article data saved to:", ARTICLES_FILE)
+print("Link data saved to:", LINKS_FILE)
+
+print("\nTotal outgoing links:", len(links_df))
+print(
+    "Unique source articles:",
+    links_df["source_page_id"].n_unique()
+)
+
+display(links_df.head(20))
+
+```
+
+
+# Inspect the article text
+
+```{python}
+# Create a summary of the downloaded articles
+if article_records:
+
+    article_summary_df = pl.DataFrame([
+        {
+            "title": article["title"],
+            "page_id": article["page_id"],
+            "text_characters": len(article["text"]),
+            "outgoing_links": article["outgoing_link_count"]
+        }
+        for article in article_records
+    ])
+
+else:
+
+    article_summary_df = pl.DataFrame(
+        schema={
+            "title": pl.String,
+            "page_id": pl.Int64,
+            "text_characters": pl.Int64,
+            "outgoing_links": pl.Int64
+        }
+    )
+
+display(
+    article_summary_df.sort(
+        "text_characters",
+        descending=True
+    )
+)
+
+```
+
+## Inspect example
+
+```{python}
+if article_records:
+
+    example_article = article_records[
+        min(3, len(article_records) - 1)
+    ]
+
+    print("ARTICLE:", example_article["title"])
+    print("PAGE ID:", example_article["page_id"])
+    print("TEXT LENGTH:", len(example_article["text"]))
+
+    print("\nARTICLE TEXT PREVIEW:\n")
+    print(example_article["text"][:3000])
+
+else:
+
+    print("No articles were successfully retrieved.")
+
+```
+
+## Inspect all 10
+
+```{python}
+if article_records:
+
+    example_article = article_records[
+        min(3, len(article_records) - 1)
+    ]
+
+    print("ARTICLE:", example_article["title"])
+    print("PAGE ID:", example_article["page_id"])
+    print("TEXT LENGTH:", len(example_article["text"]))
+
+    print("\nARTICLE TEXT PREVIEW:\n")
+    print(example_article["text"][:3000])
+
+else:
+
+    print("No articles were successfully retrieved.")
+```
+
+# Inspect Link Network
+
+```{python}
+# Count unique linked article titles
+unique_targets = links_df["target_title"].n_unique()
+
+# Count how many times each target appears
+# and how many distinct source articles link to it
+target_summary_df = (
+    links_df
+    .group_by("target_title")
+    .agg(
+        pl.len().alias("incoming_links"),
+        pl.col("source_page_id")
+        .n_unique()
+        .alias("unique_sources")
+    )
+    .sort(
+        "unique_sources",
+        descending=True
+    )
+)
+
+print("Total outgoing links:", len(links_df))
+print("Unique linked article titles:", unique_targets)
+
+display(target_summary_df.head(30))
+
+```
