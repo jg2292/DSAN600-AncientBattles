@@ -1,0 +1,20 @@
+# Distributed computing and machine learning
+pyspark
+
+# Data processing
+polars
+pyarrow
+numpy
+scipy
+
+# Natural language processing
+nltk
+
+# Network analysis
+networkx
+
+# Data collection
+requests
+
+# Visualization
+matplotlib

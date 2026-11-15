@@ -1,0 +1,40 @@
+[project]
+name = "ancient-battles"
+version = "0.1.0"
+description = "Distributed analysis of Wikipedia articles about ancient battles"
+requires-python = "==3.14.4"
+
+dependencies = [
+    # Distributed computing and machine learning
+    "pyspark==4.3.0",
+
+    # Data processing
+    "polars",
+    "pyarrow>=26.0.1",
+    "numpy",
+    "scipy",
+
+    # Natural language processing
+    "nltk",
+
+    # Network analysis
+    "networkx",
+    "python-igraph",
+
+    # Large-scale network visualization
+    "datashader",
+    "holoviews",
+    "bokeh",
+    "pyvis",
+
+    # Statistical and interactive visualization
+    "matplotlib",
+    "seaborn",
+    "plotly",
+
+    # Data collection
+    "requests",
+]
+
+[tool.uv]
+package = false
