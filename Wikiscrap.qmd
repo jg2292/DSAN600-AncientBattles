@@ -1,0 +1,1113 @@
+---
+title: "Ancient Battles — Wikipedia Article Collection"
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+jupyter: python3
+---
+
+
+# Libraries
+
+
+```{python}
+import json
+import time
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+import polars as pl
+import requests
+
+```
+
+
+# Configure the test
+
+```{python}
+# Input file
+INPUT_FILE = Path("ancient_battle_candidates.csv")
+
+# Local output directory
+OUTPUT_DIR = Path("data/raw/wikipedia")
+
+# Output files
+ARTICLES_FILE = OUTPUT_DIR / "articles.jsonl"
+LINKS_FILE = OUTPUT_DIR / "article_links.parquet"
+VISITED_FILE = OUTPUT_DIR / "visited_pages.parquet"
+FRONTIER_FILE = OUTPUT_DIR / "crawl_frontier.parquet"
+MANIFEST_FILE = OUTPUT_DIR / "collection_manifest.json"
+
+# Test configuration
+SEED_LIMIT = None       
+CRAWL_DEPTH = 2         # Two link steps beyond the seeds
+
+
+# Wikipedia API settings
+WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
+USER_AGENT = "AncientBattlesCollector/1.0 (academic research project; contact: your-email@example.com)"
+
+REQUEST_PAUSE = 1.0
+MAX_RETRIES = 8
+REQUEST_TIMEOUT = 60
+
+# Retry behavior
+MAX_BACKOFF = 120
+MAX_LAG = 5
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+```
+
+# Read the CSV and select 10 unique articles
+
+```{python}
+# Read the candidate CSV
+candidates_df = pl.read_csv(INPUT_FILE)
+
+# Make sure the required column exists
+if "wikipedia_url" not in candidates_df.columns:
+    raise ValueError("The CSV does not contain a wikipedia_url column.")
+
+# Remove missing and blank URLs
+candidates_df = (
+    candidates_df
+    .filter(pl.col("wikipedia_url").is_not_null())
+    .with_columns(
+        pl.col("wikipedia_url")
+        .cast(pl.String)
+        .str.strip_chars()
+    )
+    .filter(pl.col("wikipedia_url") != "")
+)
+
+# Keep only one row per unique Wikipedia article
+article_candidates_df = (
+    candidates_df
+    .unique(
+        subset=["wikipedia_url"],
+        keep="first",
+        maintain_order=True
+    )
+)
+
+# Apply a limit only when one is explicitly configured
+if SEED_LIMIT is not None:
+    article_candidates_df = article_candidates_df.head(SEED_LIMIT)
+
+print("Rows with valid URLs:", len(candidates_df))
+print("Unique articles selected:", len(article_candidates_df))
+
+# Display the selected articles
+display(
+    article_candidates_df.select([
+        col for col in [
+            "wikidata_id",
+            "name",
+            "date",
+            "wikipedia_url"
+        ]
+        if col in article_candidates_df.columns
+    ])
+)
+
+```
+
+# Convert the URLs into Wikipedia article titles
+
+```{python}
+def wikipedia_url_to_title(url):
+
+    parsed_url = urlparse(url)
+
+    if parsed_url.netloc.lower() != "en.wikipedia.org":
+        raise ValueError(f"Unexpected Wikipedia domain: {url}")
+
+    if not parsed_url.path.startswith("/wiki/"):
+        raise ValueError(f"Unexpected Wikipedia URL format: {url}")
+
+    title = parsed_url.path.removeprefix("/wiki/")
+
+    return unquote(title).replace("_", " ")
+
+
+# Convert each URL into its requested Wikipedia article title
+article_candidates_df = article_candidates_df.with_columns(
+    pl.col("wikipedia_url")
+    .map_elements(
+        wikipedia_url_to_title,
+        return_dtype=pl.String
+    )
+    .alias("requested_title")
+)
+
+display(
+    article_candidates_df.select([
+        "requested_title",
+        "wikipedia_url"
+    ])
+)
+
+```
+
+
+# Create the Wikipedia API connection
+
+```{python}
+# Create a persistent Wikipedia API session
+session = requests.Session()
+
+session.headers.update({
+    "User-Agent": USER_AGENT
+})
+
+
+def get_retry_after(response):
+    """
+    Read the Retry-After header, if Wikipedia provides one.
+    Supports both seconds and HTTP-date formats.
+    """
+
+    retry_after = response.headers.get("Retry-After")
+
+    if retry_after is None:
+        return None
+
+    try:
+        return max(0, float(retry_after))
+
+    except ValueError:
+        try:
+            from email.utils import parsedate_to_datetime
+            from datetime import datetime, timezone
+
+            retry_date = parsedate_to_datetime(retry_after)
+
+            return max(
+                0,
+                (retry_date - datetime.now(timezone.utc)).total_seconds()
+            )
+
+        except (TypeError, ValueError):
+            return None
+
+
+def wikipedia_api_get(params):
+
+    import random
+
+    # Include Wikimedia's maxlag protection
+    params = params.copy()
+    params.setdefault("maxlag", MAX_LAG)
+
+    for attempt in range(1, MAX_RETRIES + 1):
+
+        try:
+
+            response = session.get(
+                WIKIPEDIA_API,
+                params=params,
+                timeout=REQUEST_TIMEOUT
+            )
+
+            # Retry temporary HTTP errors
+            if response.status_code in [429, 500, 502, 503, 504]:
+
+                if attempt == MAX_RETRIES:
+                    response.raise_for_status()
+
+                retry_after = get_retry_after(response)
+
+                backoff = min(
+                    2 ** (attempt - 1),
+                    MAX_BACKOFF
+                )
+
+                wait = max(
+                    backoff,
+                    retry_after or 0
+                ) + random.uniform(0, 1)
+
+                print(
+                    f"HTTP {response.status_code}. "
+                    f"Attempt {attempt}/{MAX_RETRIES}. "
+                    f"Waiting {wait:.1f} seconds before retrying."
+                )
+
+                time.sleep(wait)
+                continue
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            # Check for API-level errors
+            if "error" in data:
+
+                error_code = data["error"].get("code", "")
+
+                retryable_errors = [
+                    "maxlag",
+                    "ratelimited"
+                ]
+
+                if error_code in retryable_errors:
+
+                    if attempt == MAX_RETRIES:
+                        raise RuntimeError(
+                            f"Wikipedia API retry limit reached: {data['error']}"
+                        )
+
+                    backoff = min(
+                        2 ** (attempt - 1),
+                        MAX_BACKOFF
+                    )
+
+                    wait = backoff + random.uniform(0, 1)
+
+                    print(
+                        f"Wikipedia API error: {error_code}. "
+                        f"Attempt {attempt}/{MAX_RETRIES}. "
+                        f"Waiting {wait:.1f} seconds."
+                    )
+
+                    time.sleep(wait)
+                    continue
+
+                raise RuntimeError(
+                    f"Wikipedia API error: {data['error']}"
+                )
+
+            return data
+
+        except requests.exceptions.RequestException as error:
+
+            if attempt == MAX_RETRIES:
+                raise
+
+            backoff = min(
+                2 ** (attempt - 1),
+                MAX_BACKOFF
+            )
+
+            wait = backoff + random.uniform(0, 1)
+
+            print(
+                f"Request failed: {error}. "
+                f"Attempt {attempt}/{MAX_RETRIES}. "
+                f"Waiting {wait:.1f} seconds before retrying."
+            )
+
+            time.sleep(wait)
+
+    raise RuntimeError("Wikipedia request failed after all retry attempts.")
+
+```
+
+
+# Write the article retrieval function
+
+```{python}
+class ArticleNotFoundError(Exception):
+    pass
+
+
+def retrieve_article(title, source_url=None):
+
+    params = {
+        "action": "query",
+        "format": "json",
+        "formatversion": 2,
+        "redirects": 1,
+        "prop": "extracts|links",
+        "explaintext": 1,
+        "exsectionformat": "plain",
+        "plnamespace": 0,
+        "pllimit": "max",
+        "titles": title
+    }
+
+    data = wikipedia_api_get(params)
+
+    pages = data["query"]["pages"]
+
+    if not pages or pages[0].get("missing"):
+        raise ArticleNotFoundError(f"Article not found: {title}")
+
+    page = pages[0]
+
+    # Extract the first batch of outgoing links
+    outgoing_links = [
+        link["title"]
+        for link in page.get("links", [])
+    ]
+
+    # Retrieve remaining links if Wikipedia paginates the results
+    while "continue" in data:
+
+        params.update(data["continue"])
+
+        time.sleep(REQUEST_PAUSE)
+
+        data = wikipedia_api_get(params)
+
+        pages = data["query"]["pages"]
+
+        if not pages:
+            break
+
+        outgoing_links.extend([
+            link["title"]
+            for link in pages[0].get("links", [])
+        ])
+
+    # Remove duplicate links while preserving order
+    outgoing_links = list(dict.fromkeys(outgoing_links))
+
+    return {
+        "page_id": page.get("pageid"),
+        "title": page.get("title"),
+        "source_url": source_url,
+        "text": page.get("extract", ""),
+        "outgoing_links": outgoing_links,
+        "outgoing_link_count": len(outgoing_links)
+    }
+
+```
+
+# Persistent state functions
+The idea behind this function is that additional documents can be grabbed at additional depth based on later compute
+
+```{python}
+# Normalize titles so that simple formatting differences
+# do not create duplicate frontier entries.
+def normalize_title(title):
+
+    if title is None:
+        return ""
+
+    return str(title).replace("_", " ").strip().casefold()
+
+
+# Read the existing article JSONL file.
+def load_articles():
+
+    articles = []
+
+    if not ARTICLES_FILE.exists():
+        return articles
+
+    with ARTICLES_FILE.open("r", encoding="utf-8") as file:
+
+        for line in file:
+
+            if not line.strip():
+                continue
+
+            try:
+                articles.append(json.loads(line))
+
+            except json.JSONDecodeError:
+                print("Warning: Skipping an incomplete JSONL record.")
+
+    return articles
+
+
+# Save the frontier safely using a temporary file.
+def save_frontier(frontier_records):
+
+    frontier_df = pl.DataFrame(
+        frontier_records,
+        schema={
+            "requested_title": pl.String,
+            "crawl_depth": pl.Int64,
+            "discovered_from_page_id": pl.Int64,
+            "source_url": pl.String,
+            "is_seed": pl.Boolean,
+            "wikidata_id": pl.String,
+            "name": pl.String,
+            "date": pl.String
+        }
+    ) if frontier_records else pl.DataFrame(
+        schema={
+            "requested_title": pl.String,
+            "crawl_depth": pl.Int64,
+            "discovered_from_page_id": pl.Int64,
+            "source_url": pl.String,
+            "is_seed": pl.Boolean,
+            "wikidata_id": pl.String,
+            "name": pl.String,
+            "date": pl.String
+        }
+    )
+
+    temporary_file = FRONTIER_FILE.with_suffix(".tmp.parquet")
+
+    frontier_df.write_parquet(temporary_file)
+    temporary_file.replace(FRONTIER_FILE)
+
+
+# Save the visited page IDs.
+def save_visited(visited_records):
+
+    visited_df = pl.DataFrame(
+        visited_records,
+        schema={
+            "page_id": pl.Int64,
+            "title": pl.String,
+            "crawl_depth": pl.Int64
+        }
+    ) if visited_records else pl.DataFrame(
+        schema={
+            "page_id": pl.Int64,
+            "title": pl.String,
+            "crawl_depth": pl.Int64
+        }
+    )
+
+    temporary_file = VISITED_FILE.with_suffix(".tmp.parquet")
+
+    visited_df.write_parquet(temporary_file)
+    temporary_file.replace(VISITED_FILE)
+
+
+# Add an article to the JSONL file immediately.
+def append_article(article):
+
+    with ARTICLES_FILE.open("a", encoding="utf-8") as file:
+
+        file.write(
+            json.dumps(article, ensure_ascii=False) + "\n"
+        )
+
+```
+
+# Crawler initialization and frontier logic
+
+```{python}
+def make_frontier_record(
+    title,
+    depth,
+    discovered_from_page_id=None,
+    source_url=None,
+    is_seed=False,
+    wikidata_id=None,
+    name=None,
+    date=None
+):
+
+    return {
+        "requested_title": str(title),
+        "crawl_depth": int(depth),
+        "discovered_from_page_id": discovered_from_page_id,
+        "source_url": str(source_url) if source_url is not None else None,
+        "is_seed": bool(is_seed),
+        "wikidata_id": str(wikidata_id) if wikidata_id is not None else None,
+        "name": str(name) if name is not None else None,
+        "date": str(date) if date is not None else None
+    }
+
+
+def deduplicate_frontier(records):
+
+    # Keep the shallowest known route to each requested title.
+    best_records = {}
+
+    for record in records:
+
+        title = record.get("requested_title")
+
+        if not title:
+            continue
+
+        key = normalize_title(title)
+
+        if key not in best_records:
+
+            best_records[key] = record
+
+        elif record["crawl_depth"] < best_records[key]["crawl_depth"]:
+
+            best_records[key] = record
+
+        elif (
+            record["crawl_depth"] == best_records[key]["crawl_depth"]
+            and record.get("is_seed")
+        ):
+
+            best_records[key] = record
+
+    return list(best_records.values())
+
+
+def initialize_crawl():
+
+    articles = load_articles()
+
+    # Reconstruct visited pages from the actual article records.
+    visited_by_id = {}
+
+    for article in articles:
+
+        page_id = article.get("page_id")
+
+        if page_id is None:
+            continue
+
+        crawl_depth = article.get("crawl_depth", 0)
+
+        visited_by_id[int(page_id)] = {
+            "page_id": int(page_id),
+            "title": article.get("title", ""),
+            "crawl_depth": int(crawl_depth)
+        }
+
+    visited_records = list(visited_by_id.values())
+
+    visited_titles = {
+        normalize_title(record["title"])
+        for record in visited_records
+    }
+
+    # Restore the previously saved frontier, if one exists.
+    if FRONTIER_FILE.exists():
+
+        frontier_df = pl.read_parquet(FRONTIER_FILE)
+        frontier_records = frontier_df.to_dicts()
+
+    else:
+
+        frontier_records = []
+
+    # Add original candidate articles that have not already
+    # been collected or queued.
+    queued_titles = {
+        normalize_title(record["requested_title"])
+        for record in frontier_records
+    }
+
+    for row in article_candidates_df.iter_rows(named=True):
+
+        title = row["requested_title"]
+        key = normalize_title(title)
+
+        if key in visited_titles or key in queued_titles:
+            continue
+
+        frontier_records.append(
+            make_frontier_record(
+                title=title,
+                depth=0,
+                source_url=row.get("wikipedia_url"),
+                is_seed=True,
+                wikidata_id=row.get("wikidata_id"),
+                name=row.get("name"),
+                date=row.get("date")
+            )
+        )
+
+        queued_titles.add(key)
+
+    # Reconstruct possible next steps from every saved article.
+    # This also protects against an interruption after an article
+    # was saved but before its newly discovered links were queued.
+    for article in articles:
+
+        source_page_id = article.get("page_id")
+
+        if source_page_id is None:
+            continue
+
+        source_depth = int(article.get("crawl_depth", 0))
+
+        for linked_title in article.get("outgoing_links", []):
+
+            key = normalize_title(linked_title)
+
+            if key in visited_titles:
+                continue
+
+            frontier_records.append(
+                make_frontier_record(
+                    title=linked_title,
+                    depth=source_depth + 1,
+                    discovered_from_page_id=int(source_page_id)
+                )
+            )
+
+    # Remove duplicates and save the restored state.
+    frontier_records = deduplicate_frontier(frontier_records)
+
+    # Keep previously collected articles out of the frontier.
+    frontier_records = [
+        record
+        for record in frontier_records
+        if normalize_title(record["requested_title"]) not in visited_titles
+    ]
+
+    save_frontier(frontier_records)
+    save_visited(visited_records)
+
+    print("Existing articles:", len(articles))
+    print("Visited Wikipedia pages:", len(visited_records))
+    print("Pending frontier articles:", len(frontier_records))
+
+    return articles, visited_by_id, frontier_records
+
+```
+
+
+# Download the 10 articles
+
+```{python}
+def run_crawler():
+
+    articles, visited_by_id, frontier_records = initialize_crawl()
+
+    visited_titles = {
+        normalize_title(record["title"])
+        for record in visited_by_id.values()
+    }
+
+    total_new_articles = 0
+    total_failed_articles = 0
+
+    print(f"\nStarting crawl through depth {CRAWL_DEPTH}.")
+
+    while True:
+
+        # Find the shallowest pending depth within the target.
+        eligible_records = [
+            record
+            for record in frontier_records
+            if record["crawl_depth"] <= CRAWL_DEPTH
+        ]
+
+        if not eligible_records:
+            break
+
+        current_depth = min(
+            record["crawl_depth"]
+            for record in eligible_records
+        )
+
+        current_batch = [
+            record
+            for record in frontier_records
+            if record["crawl_depth"] == current_depth
+        ]
+
+        print(
+            f"\nProcessing depth {current_depth}: "
+            f"{len(current_batch):,} articles"
+        )
+
+        retryable_failure_this_batch = False
+
+        for index, record in enumerate(current_batch, start=1):
+
+            title = record["requested_title"]
+            title_key = normalize_title(title)
+
+            print(
+                f"[Depth {current_depth}] "
+                f"[{index}/{len(current_batch)}] "
+                f"Retrieving: {title}"
+            )
+
+            # Skip if the title is already known.
+            if title_key in visited_titles:
+
+                frontier_records.remove(record)
+                save_frontier(frontier_records)
+                continue
+
+            try:
+
+                article = retrieve_article(
+                    title=title,
+                    source_url=record.get("source_url")
+                )
+
+                page_id = article.get("page_id")
+
+                if page_id is None:
+                    raise RuntimeError(
+                        f"No Wikipedia page ID returned for {title}"
+                    )
+
+                page_id = int(page_id)
+
+                # Check for an already downloaded canonical page.
+                if page_id in visited_by_id:
+
+                    print(
+                        f"  Already collected as "
+                        f"{visited_by_id[page_id]['title']}. Skipping."
+                    )
+
+                    frontier_records.remove(record)
+                    save_frontier(frontier_records)
+                    continue
+
+                # Attach crawl metadata.
+                article["crawl_depth"] = int(current_depth)
+                article["is_seed"] = bool(record.get("is_seed", False))
+                article["discovered_from_page_id"] = (
+                    record.get("discovered_from_page_id")
+                )
+
+                # Preserve original Wikidata metadata for seed articles.
+                if record.get("is_seed"):
+
+                    for column in ["wikidata_id", "name", "date"]:
+
+                        value = record.get(column)
+
+                        if value is not None:
+                            article[column] = (
+                                str(value) if column == "date" else value
+                            )
+
+                # Save the article immediately.
+                append_article(article)
+                articles.append(article)
+
+                visited_by_id[page_id] = {
+                    "page_id": page_id,
+                    "title": article["title"],
+                    "crawl_depth": int(current_depth)
+                }
+
+                visited_titles.add(normalize_title(article["title"]))
+
+                # Add outgoing links to the next depth.
+                next_depth = current_depth + 1
+
+                for linked_title in article["outgoing_links"]:
+
+                    if normalize_title(linked_title) in visited_titles:
+                        continue
+
+                    frontier_records.append(
+                        make_frontier_record(
+                            title=linked_title,
+                            depth=next_depth,
+                            discovered_from_page_id=page_id
+                        )
+                    )
+
+                # Remove the successfully processed article.
+                frontier_records.remove(record)
+
+                # Deduplicate and checkpoint the state.
+                frontier_records = deduplicate_frontier(frontier_records)
+
+                save_frontier(frontier_records)
+                save_visited(list(visited_by_id.values()))
+
+                total_new_articles += 1
+
+                print(
+                    f"  Saved {len(article['text']):,} characters "
+                    f"and {article['outgoing_link_count']:,} outgoing links."
+                )
+
+            except ArticleNotFoundError as error:
+
+                # Treat missing or invalid articles as completed attempts.
+                print(f"  Skipping article: {error}")
+
+                frontier_records.remove(record)
+                save_frontier(frontier_records)
+
+            except Exception as error:
+
+                # Keep failed requests in the frontier for a later run.
+                print(f"  ERROR: {error}")
+                print("  Leaving this article in the frontier for retry.")
+
+                total_failed_articles += 1
+                retryable_failure_this_batch = True
+
+            time.sleep(REQUEST_PAUSE)
+
+        # Save state after each depth level.
+        frontier_records = deduplicate_frontier(frontier_records)
+
+        save_frontier(frontier_records)
+        save_visited(list(visited_by_id.values()))
+
+        print(
+            f"Finished depth {current_depth}. "
+            f"New articles downloaded: {total_new_articles:,}"
+        )
+
+        # Stop this run if any article encountered a retryable failure.
+        if retryable_failure_this_batch:
+            print(
+                "\nA temporary failure occurred. "
+                "Stopping the crawl so failed articles can be retried "
+                "during the next run."
+            )
+            break
+
+    print("\nCrawl finished.")
+    print("New articles downloaded:", total_new_articles)
+    print("Articles with retryable failures:", total_failed_articles)
+    print("Total articles in collection:", len(articles))
+    print("Articles still in frontier:", len(frontier_records))
+
+    return articles, visited_by_id, frontier_records
+```
+
+# the link Parquet file and update the manifest
+
+```{python}
+def finalize_collection(articles, visited_by_id, frontier_records):
+
+    link_records = []
+
+    for article in articles:
+
+        source_page_id = article.get("page_id")
+
+        if source_page_id is None:
+            continue
+
+        for linked_title in article.get("outgoing_links", []):
+
+            link_records.append({
+                "source_page_id": int(source_page_id),
+                "source_title": article.get("title"),
+                "target_title": linked_title
+            })
+
+    if link_records:
+
+        links_df = (
+            pl.DataFrame(link_records)
+            .unique(
+                subset=[
+                    "source_page_id",
+                    "target_title"
+                ],
+                maintain_order=True
+            )
+        )
+
+    else:
+
+        links_df = pl.DataFrame(
+            schema={
+                "source_page_id": pl.Int64,
+                "source_title": pl.String,
+                "target_title": pl.String
+            }
+        )
+
+    links_df.write_parquet(LINKS_FILE)
+
+    # Count articles by crawl depth.
+    depth_summary = {}
+
+    for article in articles:
+
+        depth = str(article.get("crawl_depth", 0))
+
+        depth_summary[depth] = depth_summary.get(depth, 0) + 1
+
+    # Save collection metadata.
+    manifest = {
+        "target_depth_this_run": CRAWL_DEPTH,
+        "articles_collected": len(articles),
+        "visited_pages": len(visited_by_id),
+        "pending_frontier_articles": len(frontier_records),
+        "articles_by_depth": depth_summary,
+        "last_updated": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    with MANIFEST_FILE.open("w", encoding="utf-8") as file:
+
+        json.dump(
+            manifest,
+            file,
+            indent=4,
+            ensure_ascii=False
+        )
+
+    print("\nCollection files updated:")
+    print("Articles:", ARTICLES_FILE)
+    print("Links:", LINKS_FILE)
+    print("Visited pages:", VISITED_FILE)
+    print("Frontier:", FRONTIER_FILE)
+    print("Manifest:", MANIFEST_FILE)
+
+    print("\nTotal articles:", len(articles))
+    print("Total unique network edges:", len(links_df))
+    print("Unique source articles:", links_df["source_page_id"].n_unique())
+
+    print("\nArticles by depth:")
+    print(depth_summary)
+
+    return links_df
+
+```
+
+# Save and inspect the link data
+
+
+
+```{python}
+# Run or resume the crawl.
+articles, visited_by_id, frontier_records = run_crawler()
+
+# Rebuild the complete link dataset and update the manifest.
+links_df = finalize_collection(
+    articles=articles,
+    visited_by_id=visited_by_id,
+    frontier_records=frontier_records
+)
+
+```
+
+## Pause Crawler Inspection 
+
+```{python}
+# Inspect the saved collection without restarting the crawler.
+
+article_count = 0
+articles_by_depth = {}
+total_text_characters = 0
+total_outgoing_links = 0
+
+with ARTICLES_FILE.open("r", encoding="utf-8") as file:
+    for line in file:
+        if not line.strip():
+            continue
+
+        try:
+            article = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        article_count += 1
+
+        depth = article.get("crawl_depth", 0)
+
+        articles_by_depth[depth] = (
+            articles_by_depth.get(depth, 0) + 1
+        )
+
+        total_text_characters += len(article.get("text", ""))
+        total_outgoing_links += article.get("outgoing_link_count", 0)
+
+print("ARTICLES COLLECTED:", f"{article_count:,}")
+print("ARTICLES BY DEPTH:", articles_by_depth)
+print("TOTAL TEXT CHARACTERS:", f"{total_text_characters:,}")
+print("TOTAL OUTGOING LINKS:", f"{total_outgoing_links:,}")
+
+print(
+    "JSONL FILE SIZE (GB):",
+    round(ARTICLES_FILE.stat().st_size / 1e9, 3)
+)
+
+```
+
+
+
+# Inspect the article text
+
+```{python}
+# Create a summary of the downloaded articles
+if articles:
+
+    article_summary_df = pl.DataFrame([
+        {
+            "title": article["title"],
+            "page_id": article["page_id"],
+            "crawl_depth": article.get("crawl_depth", 0),
+            "is_seed": article.get("is_seed", False),
+            "text_characters": len(article.get("text", "")),
+            "outgoing_links": article.get("outgoing_link_count", 0)
+        }
+        for article in articles
+    ])
+
+else:
+
+    article_summary_df = pl.DataFrame(
+        schema={
+            "title": pl.String,
+            "page_id": pl.Int64,
+            "crawl_depth": pl.Int64,
+            "is_seed": pl.Boolean,
+            "text_characters": pl.Int64,
+            "outgoing_links": pl.Int64
+        }
+    )
+
+display(
+    article_summary_df.sort(
+        ["crawl_depth", "text_characters"],
+        descending=[False, True]
+    )
+)
+
+```
+
+## Inspect example
+
+```{python}
+if articles:
+
+    example_article = articles[
+        min(3, len(articles) - 1)
+    ]
+
+    print("ARTICLE:", example_article["title"])
+    print("PAGE ID:", example_article["page_id"])
+    print("CRAWL DEPTH:", example_article.get("crawl_depth", 0))
+    print("IS SEED:", example_article.get("is_seed", False))
+    print("TEXT LENGTH:", len(example_article["text"]))
+
+    print("\nARTICLE TEXT PREVIEW:\n")
+    print(example_article["text"][:3000])
+
+else:
+
+    print("No articles were successfully retrieved.")
+
+```
+
+
+# Inspect Link Network
+
+```{python}
+# Count unique linked article titles
+unique_targets = links_df["target_title"].n_unique()
+
+# Count how many times each target appears
+# and how many distinct source articles link to it
+target_summary_df = (
+    links_df
+    .group_by("target_title")
+    .agg(
+        pl.len().alias("incoming_links"),
+        pl.col("source_page_id")
+        .n_unique()
+        .alias("unique_sources")
+    )
+    .sort(
+        "unique_sources",
+        descending=True
+    )
+)
+
+print("Total outgoing links:", len(links_df))
+print("Unique linked article titles:", unique_targets)
+
+display(target_summary_df.head(30))
+
+```
