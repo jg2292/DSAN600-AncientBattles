@@ -15,13 +15,7 @@ abstract: |
   over latent topics. These representations are compared with distances
   derived from Wikipedia's hyperlink network.
 
-keywords:
-  - Wikipedia
-  - Ancient battles
-  - Network analysis
-  - Topic modeling
-  - Latent Dirichlet Allocation
-  - Semantic distance
+
 
 bibliography: references.bib
 ---
@@ -46,23 +40,55 @@ relationships between articles about ancient battles?
 
 # Background
 
+The World of antiquity offers a strikingly familiar and alien tone to us in the modern day.  Many of our customs, beliefs, and rituals can find a source back to this period, but at the same time there is only so much that in the modern world that we know about the ancient world.  We have narratives and individuals who jump out at us from this far flung past, but so much of the writings, archealogical evidence and perspectives have been lost to us.  This paper seeks to contextualize the narratives we have about antiquity and serve as building block for future work to analyze the sources of those narratives.  
+
 ## Wikipedia as a Knowledge Network
+
+It is for this reason that Wikipedia was chosen as the object of study because it represents a collective story about the past.  With its communitity focus, it allows for a high level synoptic understanding of any particular topic.   This is especially fascinating for the world of Antiquity where knowledge can be concentrated in a select few areas that are influences by centuries of bias about what is considered important. 
+
+## Battles as a Topic
+
+So why Battles?  Battles offer a few features that make them an apt place for the first step on tackling the world of antiquity and our understanding of it.  They for one are tied to a place.  This gives them a connection to the present where those places still exist.  We can go to the sites of these battles from over a millennia ago and see through the eyes of the individual who fought these ancient battles, seeing the same mountains, rivers, and sky.  Battles also offer a strong historical narrative, they are part of wars between states and peoples, which can be influences by ideology and religion.  This allows for the grounded place to transcend to the more abstract quickly and feed directly into the narratives we tell about the past.  It is also helpful as a starting point because much of historical research in the past had a focus on the **Great Men** of history and the **Great Battles** they won.  By anchoring on battles as a topic, we can leverage that past focus even as we try and pull out of that antiquated view of history and move into more technical theories. 
 
 ## Topic Modeling and Semantic Similarity
 
+Here is where topic modeling comes in handy. While individual Wikipedia articles tend to focus on a specific subject, they rarely exist in isolation. An article about a battle might discuss the generals involved, the political circumstances leading to the conflict, the geography of the region, or the larger war of which it was a part. Simply comparing article titles or looking for shared words would miss many of these relationships. Topic modeling offers another way to look at the content by identifying recurring themes across the collection of articles.
+
+For this project, I used Latent Dirichlet Allocation (LDA) to identify 15 topics across the 9,015 articles in the collection. LDA works by treating each article as a mixture of topics, with each topic represented by a distribution of words. Rather than assigning an article to one category, the model gives it a probability distribution across all 15 topics. An article about a particular battle, for example, might have a strong association with military history while also containing smaller proportions of topics related to geography, politics, or the individuals involved. 
+
+These topic distributions provide a way to compare the semantic content of different articles. I calculated the KL divergence distance between the topic distributions of article pairs, producing a measure of how different their underlying subject matter is. A lower distance indicates that two articles have more similar topic distributions, while a higher distance indicates greater semantic divergence. This creates a common measure that can be compared against the distance between those same articles in Wikipedia's hyperlink network.
+
 ## Network Distance
+
+Topic modeling provides a way to measure how similar two articles are in terms of their content. Wikipedia's hyperlink structure offers another perspective on how they are related. Each article in the collection is treated as a node in a directed network, with links between articles forming the edges. Network distance is measured using the shortest directed path between two articles, representing the minimum number of hyperlinks needed to travel from one article to another. A shorter distance suggests that Wikipedia places the articles closer together within its network of references, while a longer distance suggests a more indirect connection. By comparing these distances with the semantic differences between articles, we can explore whether articles that are closely connected through hyperlinks also tend to cover similar subject matter.
 
 # Data Collection
 
 ## Seed Article Selection
 
+The collection of battles was gathered from Wikidata using a SPARQL query. I searched for items classified as battles  with recorded dates between 300 BCE and 500 CE and an associated English Wikipedia article. The date range coincided with a few important historical mile stones running from the Hellenistic Age through the rise and fall of the Seleucid Empire into the Parthian then Sasanian Empire. It captured Rome's rise as a small city state to a mediterranean hegemony.  It includes the latter half of the warring states period in China to the latter stages of the Northern Wei. As such it represented a good mix of starting and ending points of what could be antiquity without favoring any.  The results provided each battle's Wikidata identifier, English name, date, and Wikipedia article URL. Multiple date statements were consolidated, and the resulting collection was exported to CSV. This list served as the starting point for the subsequent Wikipedia article collection and network construction stages.
+
 ## Wikipedia Article Collection
 
-## Link Collection and Resolution
+After identifying the initial battle articles, I used the Wikipedia API to collect their article text and outgoing hyperlinks. Each battle article served as a seed for the collection, and the crawler followed links outward to discover additional articles.  This was done locally on my machine to save the limited AWS computing budget for the actual LDA process and the network shortest path calculations which proved to be much more computationally intensive. 
+
+This allowed the collection to expand beyond battles themselves to include  people, places, wars, political entities, and other historical subjects. The crawl was configured to reach two link steps beyond the original seed articles, creating a broader picture of the historical context surrounding each battle. However, the crawl ended up only pulling in the complete picture for the first layer of articles from the battles (Depth 1).
+
+The crawler retrieved each article's page ID, title, plain-text extract, and outgoing links. It also recorded the article's crawl depth and, for the original battle articles, preserved the associated Wikidata identifiers, names, and dates. To avoid collecting the same article multiple times, titles were normalized and duplicate pages were checked using their canonical Wikipedia page IDs. The crawler also included retry handling and saved its progress as it ran, allowing the collection to be paused and resumed without starting over.
+
+The resulting collection included both the article text used for topic modeling and the outgoing links used to construct the hyperlink network. Article records were stored in JSONL format, while the extracted link relationships were saved separately in Parquet format. Keeping these two components separate made it possible to analyze the content and network structure independently while maintaining the connections between them. 
+
+Once collected locally these were all deposited into an S3 bucket in AWS.
 
 # Methodology
 
 ## Text Preprocessing
+
+Here is where AWS computing and the spark cluster first became involved in the project. I loaded the raw Wikipedia article collection from the previously mentioned S3 bucket and filtered it to include the battle articles and depth 1 linked articles. This produced the primary corpus of 9,015 articles.  
+
+The cleaning process was designed to remove material that was not useful for analyzing the actual content of the articles while preserving the historical text itself. I normalized Unicode characters, standardized whitespace and apostrophes, and removed references, bibliography sections, numeric citation markers, editorial notes such as "citation needed," URLs, and residual HTML tags. When a reference related heading was encountered, the cleaning function removed that heading and everything following it. This was to avoid the later topic model being distracted with reference and bibliographical verbage. 
+
+The cleaned articles were then saved to S3 in Parquet format, retaining each article's page ID, title, crawl depth, cleaned text, and character count statistics. Across the collection, cleaning reduced the total text from approximately 126.3 million to 117.8 million characters, removing about 8.46 million characters about 6.70% of the original text.
 
 ## Latent Dirichlet Allocation
 
