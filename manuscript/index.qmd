@@ -310,13 +310,34 @@ Figure @fig-high-kl-short-paths shows five article pairs with relatively short d
 
 Figure @fig-low-kl-long-paths shows five article pairs with relatively long directed paths but low symmetric KL divergence. Despite requiring several hyperlinks to connect the source and target articles, these pairs have relatively similar LDA topic distributions. This illustrates that articles can be semantically similar even when they are not closely connected in the hyperlink network.
 
-# Discussion
+# Conclusion
+
+The above results provide showcase how Wikipedia's hyperlink structure reflects the semantic relationships between articles about ancient battles and their historical context.
+By comparing article-level topic distributions with shortest-path distances in the hyperlink network, this study examined whether articles that are more closely connected through hyperlinks also tend to cover more similar subject matter. The high level take away is confirming with what might be expected that on average as you move away from an article, the KL divergence increases representing a change in topics. 
 
 ## Interpretation of Findings
 
+The results demonstrate that Wikipedia's ancient battle articles contain recognizable thematic patterns, while also exhibiting an uneven distribution of structural prominence within the hyperlink network. The LDA model identified 15 topics, 12 of which exhibited positive coherence scores. Several topics also contained collections of words that were readily interpretable in historical and geographic contexts, including themes associated with Iranian and Chinese warfare, as well as naval conflicts. This suggests that the topic model was able to identify meaningful patterns in the corpus, organizing articles around recurring historical subjects rather than producing entirely arbitrary word groupings. However, the presence of three topics with non-positive coherence also illustrates that not every topic was equally interpretable, highlighting the limitations of representing a diverse historical corpus through a fixed number of latent topics.  
+
+The network analysis revealed that Roman articles dominated the context articles (depth 1) connected to the original battles.  Articles concerning Roman history occupied particularly prominent positions across the degree centrality measures, suggesting that Roman related subjects were among the most extensively connected articles in the collected network. This is some ways is to be expected when considering that so many of the originating battle with situated in and around the territorial extent of the Roman empire. 
+
+
+
 ## Limitations
 
-# Conclusion
+As mentioned through out the paper, scalability was a constant concern, so the above analysis was completed with limited computing power with eventual expansion built into the structure.  Since computing power was limited however, their are some very straight forward limitations to this research
+
+### Article Depth
+
+Wikipedia articles were only scraped at 1 depth away from the battle articles, this meant that the LDA topic model corpus remained relatively focused on the historical context around the battles. ADD MORE!
+
+## Future Work 
+
+There are many areas that would compliment and build off of this analysis.  Bringing in a geospatial component as an additional distance measure, so that not only are the battle articles compared based on their network distance and semantic difference, but also there physical difference.  This would allow for insight into if certain geographical areas are more prominent in Wikipedias hyperlink network related to the battles of antiquity.  It would also highlight potential connections for how certain areas of the world are presented compared to others when thinking about the semantic layer. 
+
+However, the most obvious additional work would be expanding the corpus of wikipedia articles in the network. the structure of this research was explicitly designed with this in mind, so that additional depths of articles could be scrapped and pulled into the network.  Then it could be further analysised by the cluster to rerun the LDA topic model and all futher analysis such as the shortest path distances and semetric KL divergences calculated between articles.   
+
+This corpus could also be expanded not just in depth, but also in the time range of the battles studied.  This would potentially shift the historical focus on the project obviously forward or backwards in time, but as more modern battles are incorporated change the interpretation from what is known and remembered about the battles of antiquity to how are the battles of modernity presented, as more recent times become much better documented. 
 
 # References
 
