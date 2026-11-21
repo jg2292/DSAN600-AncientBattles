@@ -80,6 +80,8 @@ The resulting collection included both the article text used for topic modeling 
 
 Once collected locally these were all deposited into an S3 bucket in AWS.
 
+
+
 # Methodology
 
 ## Text Preprocessing
@@ -90,25 +92,222 @@ The cleaning process was designed to remove material that was not useful for ana
 
 The cleaned articles were then saved to S3 in Parquet format, retaining each article's page ID, title, crawl depth, cleaned text, and character count statistics. Across the collection, cleaning reduced the total text from approximately 126.3 million to 117.8 million characters, removing about 8.46 million characters about 6.70% of the original text.
 
+### Scalability Note 
+
+As mentioned the decision the collect the articles locally was drive primarly by resource contrants, but the actual text preprocessing was done with Spark through AWS ec2 instances.  This means that as more articles are added to the S3 bucket, this text preprocessing could scale as long as additional ec2 instances were created as workers under thse spark cluster. This will remain true for the following sections and will be repeated.  
+
 ## Latent Dirichlet Allocation
+
+I used Latent Dirichlet Allocation (LDA) to identify recurring themes across the 9,015 articles. After tokenizing the text and removing standard English stopwords, I inspected term frequencies to identify additional terms that were not useful for the analysis. I then used Spark's CountVectorizer to create a vocabulary of 20,000 terms, excluding words that appeared in fewer than three articles or in more than 80% of the collection. Each article was converted into a document-term vector representing the frequency of vocabulary terms within it.
+
+I trained the LDA model to identify 15 topics, using 20 iterations of the online optimizer. Rather than assigning each article to a single topic, the model represents it as a probability distribution across all 15 topics. Each topic is itself characterized by words that frequently occur together across the collection. I inspected the highest-weighted terms for each topic to understand the themes the model identified, although these topics were learned from the text rather than defined in advance. 
+
+To build towards the final goal of comparing the topic distance agaisnt the network distance, I applied the trained model to generate a topic distribution for every article.  
+
+
+### Scalability
+
+Since the LDA process was all done using spark clusters, as additional wikipedia articles are scraped and additional depths are pulled into the corpus then all of the above process can stay the same. although the LDA model would need to stay the same.   The design of breaking the work down by aricle depth (how far away the articles are from the original battle wikipedia articles) was specifically chosen to allow for work to be expanded, but also catagorized differently as it expanded. 
+
+### Topic Similarity Network
+
+After reviewing the individual topics, I wanted to examine how the topics related to one another. This step compares the topics themselves using Kullback-Leibler (KL) divergence. Each LDA topic can be represented as a probability distribution over the vocabulary, where each word is assigned a probability based on its importance within that topic. KL divergence provides a way to measure how different two probability distributions are.
+
+Mathematically, the KL divergence between two topic distributions $P$ and $Q$ is calculated as:
+
+$$
+D_{KL}(P\|Q)=\sum_{w\in V}P(w)\log\left(\frac{P(w)}{Q(w)}\right)
+$$
+
+Here, $P(w)$ and $Q(w)$ represent the probabilities assigned to a particular word $w$ by two different topics, and $V$ represents the model's vocabulary.
+
 
 ## Hyperlink Network Construction
 
-## Semantic Distance Calculation
+To examine the hyperlink relationships between the collected articles, I constructed a directed network using the Wikipedia links extracted during the collection process. The network consisted of 9,015 nodes, representing the articles in the corpus. Each node retained its Wikipedia page ID, article title, and crawl depth, allowing the original battle articles to be distinguished from the additional articles collected through the crawling process.
+
+I then extracted the outgoing hyperlinks from each article and matched their destinations against the collected article list. This was done by normalizing article titles through lowercase conversion and whitespace trimming before matching the links to the network nodes. Only hyperlinks connecting two articles within the 9,015-article collection were retained. Duplicate connections and self-links were removed, resulting in a directed network where each edge represents a hyperlink from one collected article to another. Because the network is directed, a connection from one article to another does not necessarily mean that the reverse connection also exists. The node and edge tables were  saved to S3 in Parquet format for use in the subsequent network analysis.
 
 ## Network Distance Calculation
 
+To measure the structural distance between articles, I calculated the shortest directed path between selected source articles and every article reachable from them in the Wikipedia hyperlink network. Because the network is directed, paths followed outgoing hyperlinks only. The shortest-path distance represents the minimum number of hyperlinks required to travel from one article to another.
+
+I selected a subset of source articles for the analysis because to run across the entire network of 9,015 nodes it would be looking at a potential 81,270,225 pairs of nodes. This subset was all 432 original battle articles (crawl depth 0) and a reproducible random sample of 100 context articles (crawl depth 1). This produced a total of 532 source articles. All 9,015 articles remained available as potential destinations or intermediate nodes along the paths.
+
+The full calculation was implemented using Apache Spark to distribute the processing across the available computing resources. Rather than attempting to calculate every possible path at once, I used an iterative breadth-first search. The process began by assigning each source article a distance of zero from itself. Spark then joined the current set of reachable articles against the network's edge table, following their outgoing hyperlinks to identify the next set of destinations. Each newly discovered destination was assigned a distance one greater than the article from which it was reached.
+
+At each iteration, previously discovered source-destination pairs were excluded from the next set of results. This ensured that each pair was retained only at its shortest discovered distance. Because the search expanded outward one link at a time, the first time a destination was reached represented the shortest directed path from that source. The process continued until no additional reachable articles were discovered. 
+
+To manage the size of the intermediate results, I divided the 532 source articles into 11 batches using a deterministic hash of each article's page ID. This produced batches of approximately 50 sources each. Each batch was processed independently, reducing the amount of source-related work handled in a single run. Intermediate results were written to Amazon S3 in Parquet format at each distance level. This also allowed the process to resume from the last successfully completed level if a batch was interrupted, rather than requiring the entire calculation to restart. The completed batch results were then retained for the subsequent semantic and network distance comparison.
+
+### Scalability
+The use of Spark and batch processing was important because the number of source-destination pairs grows as additional source articles are introduced and more of the network becomes reachable. Processing all sources simultaneously would create substantially larger intermediate datasets and increase the memory and computational demands of the calculation.
+
+By dividing the sources into independent batches, the process can be expanded by increasing the number of batches and distributing the work across additional Spark workers. The deterministic source assignment also makes it possible to reproduce the batches and resume incomplete processing. As the article collection expands, the network and edge tables can be updated and the shortest-path calculation repeated using the same general approach. However, adding articles and hyperlinks may change existing shortest paths, so the results would need to be recalculated against the expanded network rather than simply appending new distances to the existing results.
+
+## Semantic Distance Calculation
+
+To compare the semantic relationship between articles, I calculated the symmetric Kullback-Leibler (KL) divergence between their LDA topic distributions. Each article was represented by a probability distribution across the 15 topics identified by the LDA model. Rather than assigning each article to a single topic, this representation captures the relative contribution of all topics to an article.
+
+The comparison was restricted to source-target pairs for which a directed path existed in the hyperlink network. I first removed source-to-self pairs, which had a network distance of zero, leaving only comparisons between distinct articles. I then joined the shortest-path results to the LDA topic distributions for both the source and target articles. This ensured that each comparison contained both the network distance and the semantic information needed to calculate divergence.
+
+Before calculating divergence, I added a small smoothing value of \(10^{-10}\) to each topic probability. This addressed the possibility of zero probabilities, which would otherwise cause problems when calculating logarithms. After adding this value, I normalized each distribution so that the probabilities across the 15 topics summed to one.
+
+I then calculated the symmetric KL divergence between each pair of articles. Unlike standard KL divergence, which measures the difference between two distributions in a particular direction, symmetric KL divergence combines the divergence in both directions. This produces a single measure of how different the two articles' topic distributions are. A value of zero indicates identical topic distributions, while larger values indicate greater semantic divergence between the articles.
+
+The calculations were performed using Apache Spark. For each source-target pair, Spark compared the two topic distributions across all 15 topics and combined the differences into a single symmetric KL value. The resulting dataset retained the source and target article identifiers and titles, the shortest-path distance, and the calculated semantic divergence. I also checked the results for missing divergence values and materially negative values to verify the calculation.
+
+### Scalability
+
+The semantic distance calculation was designed to work with the same distributed approach used for the shortest-path analysis. Rather than collecting the article-pair data and topic distributions into local memory, Spark performed the joins and calculations across the available computing resources. This is particularly important because the number of semantic comparisons depends on the number of reachable source-target pairs produced by the network analysis.
+
+The current analysis calculates semantic divergence for the reachable pairs originating from 532 source articles. Expanding the analysis to use all 9,015 articles as sources would increase the number of potential comparisons to approximately 81.3 million, although the actual number would depend on network reachability. The existing approach could accommodate this expansion by processing the additional pairs through Spark and increasing the available computing resources as needed.
+
+Because the topic distributions are already calculated for all 9,015 articles, expanding the semantic comparison would not require retraining the LDA model, provided the article collection and model remained unchanged. Instead, the additional work would involve joining the expanded shortest-path results to the existing topic distributions and calculating divergence for each pair. As with the network distance calculation, the primary constraints would be processing time, memory, and storage for the larger pair dataset.
+
 ## Statistical Comparison
+
+The purpose of this analysis was to examine whether articles that are closer together in the Wikipedia hyperlink network also tend to have more similar LDA topic distributions. I used the shortest directed-path distance as the measure of network proximity and symmetric KL divergence as the measure of semantic difference. Each observation represented a source-target article pair for which a directed path existed and both articles had an LDA topic distribution.
+
+I first grouped the article pairs by their shortest-path distance and calculated descriptive statistics for semantic divergence at each distance. These included the number of article pairs, mean and median symmetric KL divergence, first and third quartiles, standard deviation, and minimum and maximum values. Grouping the results in this way allowed me to examine how semantic divergence was distributed among articles separated by different numbers of hyperlinks.
+
+I also calculated the Pearson correlation coefficient between shortest-path distance and symmetric KL divergence across all article pairs. This provided an overall measure of the direction and strength of the linear association between network distance and semantic divergence. A positive correlation would indicate that greater network distances tend to be associated with greater semantic divergence, while a negative correlation would indicate the opposite. A correlation closer to zero would indicate a weaker linear relationship.
+
+### Scalability
+
+The comparison was performed using Apache Spark, allowing the descriptive statistics and correlation to be calculated across the full collection of reachable source-target pairs without first collecting the individual observations into local memory. As the article collection and number of reachable pairs increase, the same approach can be applied using Spark to distribute the aggregation and correlation calculations across additional computing resources. The distance-level summary is particularly manageable because it reduces the article-pair dataset to a relatively small number of aggregated observations, one for each network distance.
 
 # Results
 
-## Collection Summary
+## LDA
 
-## LDA Topic Results
+After generating the topic distributions, I calculated several diagnostic measures to better understand how the LDA model represented each article. These included the highest topic probability, the number of topics with a probability of at least 5%, and the entropy of each article's topic distribution. Entropy measures how evenly an article's probability is distributed across the 15 topics, with higher values indicating a more evenly distributed mixture of topics. I also calculated normalized entropy by dividing entropy by the maximum possible entropy, allowing the measure to be interpreted on a scale from 0 to 1. Together, these measures provide a way to examine whether articles are strongly associated with a small number of topics or have broader distributions across the model's topics.
 
-## Network Structure
+[![Topic distribution across articles grouped by crawl depth.](images/topic_distribution_by_crawl_depth.png)](images/topic_distribution_by_crawl_depth.png){#fig-topic-distribution-depth fig-cap="Average LDA topic distributions by crawl depth."}
+
+An interesting, but largely expected point is that crawl depth 0 has a lower average normalized Entropy  due to those articles being deliberatly chosen on a single topic "battles of antiquity" and so having a low entropy fits that expectation.  Compared to the 8,583 articles which are linked articles off of those 432 battle articles. 
+
+[![Average topic probability by crawl depth](images/average_topic_probability_by_depth.png)](images/average_topic_probability_by_depth.png){#fig-average-topic-probability-depth fig-cap="Average LDA topic probability by crawl depth."}
+
+Figure @fig-average-topic-probability-depth compares the average probability assigned to each of the 15 LDA topics among original battle articles and linked context articles. This provides a more detailed view of how the thematic composition of the two groups differs.  The initial battle list has a much great concentration in a single topic (topic 3) than the depth 1 context articles. 
+
+### Topic Coherence
+
+In addition to reviewing the article-level topic distributions, I evaluated how coherent the topics themselves were using Normalized Pointwise Mutual Information (NPMI). This measure evaluates how frequently the words associated with a topic appear together across the document collection. Higher scores indicate that the words tend to co-occur more frequently than would be expected based on their individual frequencies, suggesting a more coherent topic. Lower or negative scores indicate weaker relationships between the words.
+
+The overall NPMI coherence score across the 15 topics was 0.1822. However, there was considerable variation between individual topics. The highest-scoring topics had coherence values of 0.4370 and 0.4171, while three topics had negative scores. This suggests that while the model identified several groups of closely related terms, the coherence of the resulting topics was not uniform across the collection.
+
+
+[![NPMI coherence scores for the 15 LDA topics.](images/representative_articles/topic_coherence.png)](images/representative_articles/topic_coherence.png){#fig-topic-coherence fig-cap="NPMI coherence scores across the 15 LDA topics."}
+
+#### Selected Topic Top Words
+
+To provide a more concrete look at the topics identified by the LDA model, I examined the highest-weighted words associated with each topic. The following figures show the two topics with the highest NPMI coherence scores and the two with the lowest scores. This provides examples of both the more coherent word groupings and those where the relationships between the top words are less clear. The visualizations for all 15 topics are available in Appendix A.
+
+[![Top words associated with Topic 0.](images/topic_words/topic_01_top_words.png)](images/topic_words/topic_01_top_words.png){#fig-topic-0 fig-cap="Highest-weighted words for Topic 0 (highest NPMI coherence)."}
+
+[![Top words associated with Topic 1.](images/topic_words/topic_02_top_words.png)](images/topic_words/topic_02_top_words.png){#fig-topic-1 fig-cap="Highest-weighted words for Topic 1 (second-highest NPMI coherence)."}
+
+[![Top words associated with Topic 13.](images/topic_words/topic_14_top_words.png)](images/topic_words/topic_14_top_words.png){#fig-topic-13 fig-cap="Highest-weighted words for Topic 13 (second-lowest NPMI coherence)."}
+
+[![Top words associated with Topic 14.](images/topic_words/topic_15_top_words.png)](images/topic_words/topic_15_top_words.png){#fig-topic-14 fig-cap="Highest-weighted words for Topic 14 (lowest NPMI coherence)."}
+
+## Wikipedia Hyperlink Network
+
+The resulting Wikipedia hyperlink network contained 9,015 articles (nodes) and 822,896 directed connections (edges). The network density was 0.01013, meaning that approximately 1.01% of all possible directed connections between articles were present in the network. Of the 9,015 articles, 8,976 had at least one outgoing hyperlink and 8,913 received at least one incoming hyperlink.
+
+To visualize the structure of the network, I selected the 300 articles with the highest total degree, calculated as the sum of each article's incoming and outgoing connections in the full network. I then extracted the hyperlinks connecting these selected articles to one another. Figure @fig-wikipedia-network shows the resulting subnetwork, with original battle articles (crawl depth 0) displayed in red and additional context articles (crawl depth 1) displayed in orange. Node selection was based on connections in the full network, while the visualization displays only connections between the 300 selected articles.
+
+[![Wikipedia hyperlink network showing the 300 most connected articles.](images/network/wikipedia_network_by_depth.png)](images/network/wikipedia_network_by_depth.png){#fig-wikipedia-network fig-cap="Subnetwork of the 300 articles with the highest total degree in the full Wikipedia hyperlink network. Red nodes represent original battle articles (depth 0), while orange nodes represent linked context articles (depth 1)."}
+
+### Degree distributions
+
+The degree distributions show the number of articles across different ranges of incoming, outgoing, and total connections. All three distributions are displayed using a logarithmic y-axis to accommodate differences in article counts across degree ranges. This provides an overview of how connections are distributed throughout the network.
+
+[![Degree distributions](images/network/degree_distributions.png)](images/network/degree_distributions.png){fig-cap="Distribution of article degree across the Wikipedia hyperlink network."}
+
+### Incoming vs. outgoing degree
+
+The relationship between in-degree and out-degree provides another perspective on article connectivity. Comparing the two measures shows how the number of links pointing to an article relates to the number of links originating from it.
+
+[![In-degree versus out-degree](images/network/in_vs_out_degree_heatmap.png)](images/network/in_vs_out_degree_heatmap.png){fig-cap="Comparison of incoming and outgoing connections across network articles."}
+
+### Top 25 Degree articles overall
+
+Focusing on the top rank articles highlight which articles occupy the most connected positions within the Wikipedia collection. The overall ranking identifies the articles with the greatest connectivity across collected corpus
+
+[![Top 25 articles overall](images/network/overall_top_25.png)](images/network/overall_top_25.png){fig-cap="The 25 articles with the highest total degree in the full hyperlink network."}
+
+#### Top 25 Degree Battle Articles 
+
+The ranking of original battle articles identifies which battles have the highest total degree within the collected hyperlink network. These articles have the greatest combined number of incoming and outgoing connections among the original battle articles.
+
+[![Top 25 battle articles](images/network_diagnostics/battle_articles_top_25.png)](images/network_diagnostics/battle_articles_top_25.png){#fig-top-25-battles fig-cap="The 25 original battle articles with the highest total degree in the Wikipedia hyperlink network."}
+
+#### Top 25 Degree Context Articles 
+
+The ranking of context articles identifies which linked articles have the highest total degree within the collected hyperlink network. I call them context articles because of how they were scraped then provide context to the original battle articles. These articles represent the most connected historical topics outside the original battle-article collection.
+
+[![Top 25 context articles](images/network_diagnostics/context_articles_top_25.png)](images/network_diagnostics/context_articles_top_25.png){#fig-top-25-context fig-cap="The 25 linked context articles with the highest total degree in the Wikipedia hyperlink network."}
+
+### Edge mixing matrix
+
+The edge mixing matrix examines how hyperlinks are distributed between the two article groups: original battle articles and linked articles. It distinguishes between links originating from battle articles and those originating from articles, as well as the group to which each link points.
+
+[![Edge mixing matrix](images/network/edge_mixing_matrix.png)](images/network/edge_mixing_matrix.png){fig-cap="Distribution of directed hyperlinks between original battle articles and linked context articles."}
+
+
+## Topic Similarity 
+
+The pairwise symmetric KL divergence values for all 15 LDA topics are presented in Figure @fig-topic-kl-heatmap. Each cell represents the divergence between a pair of topics, with the numerical values displayed directly in the heatmap. The color scale provides a visual representation of the divergence values, with lighter colors indicating lower divergence and darker colors indicating higher divergence. The matrix includes comparisons between every topic, providing an overview of the semantic differences across the full set of LDA topics.
+
+[![Pairwise symmetric KL divergence between the 15 LDA topics.](images/topic_similarity/topic_kl_divergence_heatmap.png)](images/topic_similarity/topic_kl_divergence_heatmap.png){#fig-topic-kl-heatmap fig-cap="Heatmap of pairwise symmetric KL divergence values between all 15 LDA topics. Lower values indicate greater similarity between topic distributions."}
+
+### Network 
+The topic similarity network showed the pairwise relationships among the 15 LDA topics, with each topic connected to its two closest neighbors based on KL divergence. The lowest divergence was observed between Topics 7 and 9 (1.2587), followed by Topics 2 and 11 (1.4855) and Topics 2 and 4 (1.5519). The network contained 15 topic nodes and 21 unique connections, with edge thickness representing the relative divergence between connected topics. Figure @fig-topic-similarity-network presents the resulting network, with the topic labels provided in the legend.
+
+[![Semantic similarity network between the 15 LDA topics.](images/topic_similarity/topic_similarity_network.png)](images/topic_similarity/topic_similarity_network.png){#fig-topic-similarity-network fig-cap="Topic similarity network constructed using the two closest topic neighbors for each LDA topic. Thicker edges indicate lower KL divergence."}
+
 
 ## Semantic and Network Distance Comparison
+
+### Overall Semantic Divergence by Network Distance
+
+The primary comparison examined the relationship between the shortest directed path between two articles and the symmetric KL divergence between their LDA topic distributions. Each observation represents a reachable source-target article pair, with network distance measuring the number of hyperlinks along the shortest directed path and symmetric KL divergence measuring the difference between the two articles' topic distributions.
+
+[![Semantic divergence by network distance](images/semantic_divergence_by_distance.png)](images/semantic_divergence_by_distance.png){#fig-semantic-divergence-distance fig-cap="Mean and median symmetric KL divergence by shortest directed network distance. Error bars show the interquartile range."}
+
+### Distribution of Semantic Divergence
+
+The distribution of individual article-pair values provides additional detail about the variation within those distances.
+
+[![Semantic divergence boxplot](images/semantic_divergence_boxplot.png)](images/semantic_divergence_boxplot.png){#fig-semantic-divergence-boxplot fig-cap="Distribution of symmetric KL divergence across shortest directed network distances."}
+
+[![Semantic divergence empirical cumulative distribution](images/semantic_divergence_ecdf.png)](images/semantic_divergence_ecdf.png){#fig-semantic-divergence-ecdf fig-cap="Empirical cumulative distribution of symmetric KL divergence."}
+
+Figure @fig-semantic-divergence-ecdf compares the cumulative distributions of symmetric KL divergence across shortest directed network distances. The horizontal axis represents semantic divergence, while the vertical axis shows the cumulative proportion of article pairs with a divergence less than or equal to each value.
+
+The distributions show a noticeable difference between shorter and longer network distances. At distance 1, approximately 60% of article pairs had a symmetric KL divergence of 5 or less. This proportion decreased to approximately 35% at distance 2 and 25% at distance 3. The distributions for distances 4, 5, and 6 were shifted considerably farther to the right, with relatively few article pairs exhibiting similarly low divergence values. This indicates that article pairs separated by fewer hyperlinks generally had more similar LDA topic distributions than those separated by longer paths.
+
+However, the distributions did not follow a consistent progression across all distances. The curves for distances 4, 5, and 6 overlap and cross, indicating that semantic divergence did not increase uniformly with each additional hyperlink. The variation within each distance group also shows that network proximity does not fully determine the semantic relationship between two articles.
+
+### Article-Level Differences
+
+The overall relationship may not be consistent across all source articles. I therefore also examined average semantic divergence by source article and compared source-level divergence with the number of articles reachable from each source.
+
+[![Average divergence by source](images/average_divergence_by_source.png)](images/average_divergence_by_source.png){#fig-average-divergence-source fig-cap="Average symmetric KL divergence across reachable target articles for each source article."}
+
+[![Source reachability and divergence](images/source_reachability_vs_divergence.png)](images/source_reachability_vs_divergence.png){#fig-source-reachability-divergence fig-cap="Relationship between the number of reachable articles and average semantic divergence for each source article."}
+
+### Examples of Semantic and Network Distance Relationships
+
+[![Top five article pairs with high semantic divergence across short network paths](images/top_5_high_kl_short_network_paths.png)](images/top_5_high_kl_short_network_paths.png){#fig-high-kl-short-paths fig-cap="Five article pairs with high symmetric KL divergence despite having short directed network paths."}
+
+Figure @fig-high-kl-short-paths shows five article pairs with relatively short directed paths but high symmetric KL divergence. Although these articles are connected through only a small number of hyperlinks, their LDA topic distributions are substantially different. The highlighted paths illustrate that close network connections do not necessarily correspond to strong semantic similarity.
+
+[![Top five article pairs with low semantic divergence across long network paths](images/top_5_low_kl_long_network_paths.png)](images/top_5_low_kl_long_network_paths.png){#fig-low-kl-long-paths fig-cap="Five article pairs with low symmetric KL divergence despite having long directed network paths."}
+
+Figure @fig-low-kl-long-paths shows five article pairs with relatively long directed paths but low symmetric KL divergence. Despite requiring several hyperlinks to connect the source and target articles, these pairs have relatively similar LDA topic distributions. This illustrates that articles can be semantically similar even when they are not closely connected in the hyperlink network.
 
 # Discussion
 
@@ -119,3 +318,38 @@ The cleaned articles were then saved to S3 in Parquet format, retaining each art
 # Conclusion
 
 # References
+
+
+# Appendix A: Complete LDA Topic Visualizations
+
+The following figures present the highest-weighted words associated with each of the 15 topics identified by the LDA model. Together, they provide a complete view of the topics discussed in the main analysis.
+
+![Top words associated with Topic 0.](images/topic_words/topic_01_top_words.png){fig-cap="Highest-weighted words for Topic 0."}
+
+![Top words associated with Topic 1.](images/topic_words/topic_02_top_words.png){fig-cap="Highest-weighted words for Topic 1."}
+
+![Top words associated with Topic 2.](images/topic_words/topic_03_top_words.png){fig-cap="Highest-weighted words for Topic 2."}
+
+![Top words associated with Topic 3.](images/topic_words/topic_04_top_words.png){fig-cap="Highest-weighted words for Topic 3."}
+
+![Top words associated with Topic 4.](images/topic_words/topic_05_top_words.png){fig-cap="Highest-weighted words for Topic 4."}
+
+![Top words associated with Topic 5.](images/topic_words/topic_06_top_words.png){fig-cap="Highest-weighted words for Topic 5."}
+
+![Top words associated with Topic 6.](images/topic_words/topic_07_top_words.png){fig-cap="Highest-weighted words for Topic 6."}
+
+![Top words associated with Topic 7.](images/topic_words/topic_08_top_words.png){fig-cap="Highest-weighted words for Topic 7."}
+
+![Top words associated with Topic 8.](images/topic_words/topic_09_top_words.png){fig-cap="Highest-weighted words for Topic 8."}
+
+![Top words associated with Topic 9.](images/topic_words/topic_10_top_words.png){fig-cap="Highest-weighted words for Topic 9."}
+
+![Top words associated with Topic 10.](images/topic_words/topic_11_top_words.png){fig-cap="Highest-weighted words for Topic 10."}
+
+![Top words associated with Topic 11.](images/topic_words/topic_12_top_words.png){fig-cap="Highest-weighted words for Topic 11."}
+
+![Top words associated with Topic 12.](images/topic_words/topic_13_top_words.png){fig-cap="Highest-weighted words for Topic 12."}
+
+![Top words associated with Topic 13.](images/topic_words/topic_14_top_words.png){fig-cap="Highest-weighted words for Topic 13."}
+
+![Top words associated with Topic 14.](images/topic_words/topic_15_top_words.png){fig-cap="Highest-weighted words for Topic 14."}
