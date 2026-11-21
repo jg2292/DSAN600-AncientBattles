@@ -225,19 +225,19 @@ To visualize the structure of the network, I selected the 300 articles with the 
 
 The degree distributions show the number of articles across different ranges of incoming, outgoing, and total connections. All three distributions are displayed using a logarithmic y-axis to accommodate differences in article counts across degree ranges. This provides an overview of how connections are distributed throughout the network.
 
-[![Degree distributions](../images/network/degree_distributions.png)](../images/network/degree_distributions.png){fig-cap="Distribution of article degree across the Wikipedia hyperlink network."}
+[![Degree distributions](../images/network_diagnostics/degree_distributions.png)](../images/network_diagnostics/degree_distributions.png){fig-cap="Distribution of article degree across the Wikipedia hyperlink network."}
 
 ### Incoming vs. outgoing degree
 
 The relationship between in-degree and out-degree provides another perspective on article connectivity. Comparing the two measures shows how the number of links pointing to an article relates to the number of links originating from it.
 
-[![In-degree versus out-degree](../images/network/in_vs_out_degree_heatmap.png)](../images/network/in_vs_out_degree_heatmap.png){fig-cap="Comparison of incoming and outgoing connections across network articles."}
+[![In-degree versus out-degree](../images/network_diagnostics/in_vs_out_degree_heatmap.png)](../images/network_diagnostics/in_vs_out_degree_heatmap.png){fig-cap="Comparison of incoming and outgoing connections across network articles."}
 
 ### Top 25 Degree articles overall
 
 Focusing on the top rank articles highlight which articles occupy the most connected positions within the Wikipedia collection. The overall ranking identifies the articles with the greatest connectivity across collected corpus
 
-[![Top 25 articles overall](../images/network/overall_top_25.png)](../images/network/overall_top_25.png){fig-cap="The 25 articles with the highest total degree in the full hyperlink network."}
+[![Top 25 articles overall](../images/network_diagnostics/overall_top_25.png)](../images/network_diagnostics/overall_top_25.png){fig-cap="The 25 articles with the highest total degree in the full hyperlink network."}
 
 #### Top 25 Degree Battle Articles 
 
@@ -255,7 +255,7 @@ The ranking of context articles identifies which linked articles have the highes
 
 The edge mixing matrix examines how hyperlinks are distributed between the two article groups: original battle articles and linked articles. It distinguishes between links originating from battle articles and those originating from articles, as well as the group to which each link points.
 
-[![Edge mixing matrix](../images/network/edge_mixing_matrix.png)](../images/network/edge_mixing_matrix.png){fig-cap="Distribution of directed hyperlinks between original battle articles and linked context articles."}
+[![Edge mixing matrix](../images/network_diagnostics/edge_mixing_matrix.png)](../images/network_diagnostics/edge_mixing_matrix.png){fig-cap="Distribution of directed hyperlinks between original battle articles and linked context articles."}
 
 
 ## Topic Similarity 
@@ -298,7 +298,7 @@ The overall relationship may not be consistent across all source articles. I the
 
 [![Average divergence by source](../images/average_divergence_by_source.png)](../images/average_divergence_by_source.png){#fig-average-divergence-source fig-cap="Average symmetric KL divergence across reachable target articles for each source article."}
 
-[![Source reachability and divergence](../images/source_reachability_vs_divergence.png)](../images/source_reachability_vs_divergence.png){#fig-source-reachability-divergence fig-cap="Relationship between the number of reachable articles and average semantic divergence for each source article."}
+
 
 ### Examples of Semantic and Network Distance Relationships
 
