@@ -245,22 +245,22 @@ relationships between articles about ancient battles?
 
 \section{Background}\label{background}
 
-The World of antiquity offers a strikingly familiar and alien tone to us
-in the modern day. Many of our customs, beliefs, and rituals can find a
-source back to this period, but at the same time there is only so much
-that in the modern world that we know about the ancient world. We have
-narratives and individuals who jump out at us from this far flung past,
-but so much of the writings, archealogical evidence and perspectives
-have been lost to us. This paper seeks to contextualize the narratives
-we have about antiquity and serve as building block for future work to
-analyze the sources of those narratives.
+The world of antiquity offers a strikingly familiar yet alien
+perspective to us today. Many of our customs, beliefs, and rituals can
+be traced back to this period, but at the same time, there is only so
+much we know about the ancient world. We have narratives and individuals
+who jump out at us from this far flung past, but so much of the
+writings, archaeological evidence and perspectives have been lost to us.
+This paper seeks to contextualize the narratives we have about antiquity
+and serve as building block for future work to analyze the sources of
+those narratives.
 
 \subsection{Wikipedia as a Knowledge
 Network}\label{wikipedia-as-a-knowledge-network}
 
 It is for this reason that Wikipedia was chosen as the object of study
 because it represents a collective story about the past. With its
-communitity focus, it allows for a high level synoptic understanding of
+community focus, it allows for a high level synoptic understanding of
 any particular topic. This is especially fascinating for the world of
 Antiquity where knowledge can be concentrated in a select few areas that
 are influences by centuries of bias about what is considered important.
@@ -343,7 +343,7 @@ lays out how a LDA can be used for machine learning to develop a model
 over a collection of documents. The paper describes the strengths that
 LDA has over other earlier models like probabilistic LSI (pLSI). This is
 the foundation of my use of LDA in this project to build out a topic
-model from the wikipedia corpus that is constructed around the battles
+model from the Wikipedia corpus that is constructed around the battles
 of antiquity
 
 \subsubsection{Authoritative Sources in a Hyperlinked
@@ -398,10 +398,10 @@ relationships to examine the organization of historical knowledge.
 The collection of battles was gathered from Wikidata using a SPARQL
 query. I searched for items classified as battles with recorded dates
 between 300 BCE and 500 CE and an associated English Wikipedia article.
-The date range coincided with a few important historical mile stones
+The date range coincided with a few important historical milestones
 running from the Hellenistic Age through the rise and fall of the
 Seleucid Empire into the Parthian then Sasanian Empire. It captured
-Rome's rise as a small city state to a mediterranean hegemony. It
+Rome's rise as a small city state to a Mediterranean hegemony. It
 includes the latter half of the warring states period in China to the
 latter stages of the Northern Wei. As such it represented a good mix of
 starting and ending points of what could be antiquity without favoring
@@ -467,7 +467,7 @@ sections, numeric citation markers, editorial notes such as ``citation
 needed,'' URLs, and residual HTML tags. When a reference related heading
 was encountered, the cleaning function removed that heading and
 everything following it. This was to avoid the later topic model being
-distracted with reference and bibliographical verbage.
+distracted with reference and bibliographical verbiage.
 
 The cleaned articles were then saved to S3 in Parquet format, retaining
 each article's page ID, title, crawl depth, cleaned text, and character
@@ -478,10 +478,10 @@ about 8.46 million characters about 6.70\% of the original text.
 \subsubsection{Scalability Note}\label{scalability-note}
 
 As mentioned the decision the collect the articles locally was drive
-primarly by resource contrants, but the actual text preprocessing was
+primarily by resource constraints, but the actual text preprocessing was
 done with Spark through AWS ec2 instances. This means that as more
 articles are added to the S3 bucket, this text preprocessing could scale
-as long as additional ec2 instances were created as workers under thse
+as long as additional ec2 instances were created as workers under these
 spark cluster. This will remain true for the following sections and will
 be repeated.
 
@@ -501,11 +501,12 @@ within it.
 I trained the LDA model to identify 15 topics, using 20 iterations of
 the online optimizer. Rather than assigning each article to a single
 topic, the model represents it as a probability distribution across all
-15 topics. Each topic is itself characterized by words that frequently
-occur together across the collection. I inspected the highest-weighted
-terms for each topic to understand the themes the model identified,
-although these topics were learned from the text rather than defined in
-advance.
+15 topics. Each topic is characterized by a probability distribution
+over the vocabulary, with words receiving higher probabilities when they
+are more strongly associated with that topic. I inspected the
+highest-weighted terms for each topic to understand the themes the model
+identified, although these topics were learned from the text rather than
+defined in advance.
 
 To build towards the final goal of comparing the topic distance agaisnt
 the network distance, I applied the trained model to generate a topic
@@ -514,12 +515,12 @@ distribution for every article.
 \subsubsection{Scalability}\label{scalability}
 
 Since the LDA process was all done using spark clusters, as additional
-wikipedia articles are scraped and additional depths are pulled into the
+Wikipedia articles are scraped and additional depths are pulled into the
 corpus then all of the above process can stay the same. although the LDA
 model would need to stay the same. The design of breaking the work down
-by aricle depth (how far away the articles are from the original battle
-wikipedia articles) was specifically chosen to allow for work to be
-expanded, but also catagorized differently as it expanded.
+by article depth (how far away the articles are from the original battle
+Wikipedia articles) was specifically chosen to allow for work to be
+expanded, but also categorized differently as it expanded.
 
 \subsubsection{Topic Similarity Network}\label{topic-similarity-network}
 
@@ -774,10 +775,10 @@ broader distributions across the model's topics.
 \end{figure}%
 
 An interesting, but largely expected point is that crawl depth 0 has a
-lower average normalized Entropy due to those articles being deliberatly
-chosen on a single topic ``battles of antiquity'' and so having a low
-entropy fits that expectation. Compared to the 8,583 articles which are
-linked articles off of those 432 battle articles.
+lower average normalized Entropy due to those articles being
+deliberately chosen on a single topic ``battles of antiquity'' and so
+having a low entropy fits that expectation. Compared to the 8,583
+articles which are linked articles off of those 432 battle articles.
 
 \begin{figure}[H]
 
@@ -893,7 +894,7 @@ only connections between the 300 selected articles.
 
 \begin{figure}[H]
 
-{\centering \includegraphics{../images/network/wikipedia_network_by_depth.png}
+{\centering \includegraphics{../images/network/Wikipedia_network_by_depth.png}
 
 }
 
@@ -1040,9 +1041,8 @@ The topic similarity network showed the pairwise relationships among the
 based on KL divergence. The lowest divergence was observed between
 Topics 7 and 9 (1.2587), followed by Topics 2 and 11 (1.4855) and Topics
 2 and 4 (1.5519). The network contained 15 topic nodes and 21 unique
-connections, with edge thickness representing the relative divergence
-between connected topics. The figure below presents the resulting
-network, with the topic labels provided in the legend.
+connections. The figure below presents the resulting network, with the
+topic labels provided in the legend.
 
 \begin{figure}[H]
 
@@ -1199,7 +1199,7 @@ connected in the hyperlink network.
 \section{Conclusion}\label{conclusion}
 
 The above results provide showcase how Wikipedia's hyperlink structure
-softly reflects the semantic relationships between articles about
+weakly reflects the semantic relationships between articles about
 ancient battles and their historical context. By comparing article level
 topic distributions with shortest path distances in the hyperlink
 network, this study examined whether articles that are more closely
@@ -1243,8 +1243,8 @@ originating battle articles were situated within or around the
 historical territorial extent of the Roman Empire. The resulting
 collection of articles therefore contains numerous connections to Roman
 military, political, geographic, and historical subjects. This
-illustrates how the the corpus of battles in english language wikipedia
-from the years 300 bce to 500 ce is heavily tilted towards a roman
+illustrates how the the corpus of battles in English language Wikipedia
+from the years 300 bce to 500 ce is heavily tilted towards a Roman
 centric framework. This emphasis may reflect the greater availability of
 surviving Roman historical sources, the influence of established Western
 historical scholarship, or the interests and priorities of Wikipedia's
@@ -1266,10 +1266,10 @@ research.
 
 \subsection{Limitations}\label{limitations}
 
-As mentioned through out the paper, scalability was a constant concern,
+As mentioned throughout the paper, scalability was a constant concern,
 so the above analysis was completed with limited computing power with
 eventual expansion built into the structure. Since computing power was
-limited however, their are some very straight forward limitations to
+limited however, there are some very straight forward limitations to
 this research
 
 \subsubsection{Article Depth}\label{article-depth}
@@ -1309,11 +1309,11 @@ better balances thematic specificity and coherence.
 \subsubsection{Shortest Paths and KL
 Divergence}\label{shortest-paths-and-kl-divergence}
 
-Due to computation constrants, rather than calculating shortest paths
+Due to computation constraints, rather than calculating shortest paths
 from all 9,015 articles, I used all 432 original battle articles and a
 reproducible random sample of 100 depth 1 context articles as sources.
 All 9,015 articles remained available as potential destinations and
-intermediate nodess. The project was designed in such a way however that
+intermediate nodes. The project was designed in such a way however that
 as more computing power is added a larger number of samples could be
 selected or potentially the full set of article pairs could be
 calculated.
@@ -1324,18 +1324,18 @@ There are many areas that would compliment and build off of this
 analysis. As mentioned earlier, bringing in a geospatial component as an
 additional distance measure, so that not only are the battle articles
 compared based on their network distance and semantic difference, but
-also there physical difference. This would allow for insight into if
+also there physical distance. This would allow for insight into if
 certain geographical areas are more prominent in Wikipedias hyperlink
 network related to the battles of antiquity. It would also highlight
 potential connections for how certain areas of the world are presented
 compared to others when thinking about the semantic layer.
 
 However, the most obvious additional work would be expanding the corpus
-of wikipedia articles in the network. the structure of this research was
+of Wikipedia articles in the network. the structure of this research was
 explicitly designed with this in mind, so that additional depths of
 articles could be scrapped and pulled into the network. Then it could be
-further analysised by the cluster to rerun the LDA topic model and all
-futher analysis such as the shortest path distances and semetric KL
+further analyzed by the cluster to rerun the LDA topic model and all
+futher analysis such as the shortest path distances and symmetric KL
 divergences calculated between articles.
 
 Finally, the corpus could be expanded beyond the historical period
@@ -1347,7 +1347,7 @@ historical documentation and the availability of contemporary sources
 influence the thematic and network structures of Wikipedia articles.
 This would extend the analysis beyond the representation of ancient
 history and provide a broader perspective on how historical knowledge is
-organized within the wikipedia.
+organized within the Wikipedia.
 
 \section{References}\label{references}
 
