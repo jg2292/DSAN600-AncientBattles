@@ -91,6 +91,39 @@
 \makeatletter
 \def\fps@figure{htbp}
 \makeatother
+% definitions for citeproc citations
+\NewDocumentCommand\citeproctext{}{}
+\NewDocumentCommand\citeproc{mm}{%
+  \begingroup\def\citeproctext{#2}\cite{#1}\endgroup}
+\makeatletter
+ % allow citations to break across lines
+ \let\@cite@ofmt\@firstofone
+ % avoid brackets around text for \cite:
+ \def\@biblabel#1{}
+ \def\@cite#1#2{{#1\if@tempswa , #2\fi}}
+\makeatother
+\newlength{\cslhangindent}
+\setlength{\cslhangindent}{1.5em}
+\newlength{\csllabelwidth}
+\setlength{\csllabelwidth}{3em}
+\newenvironment{CSLReferences}[2] % #1 hanging-indent, #2 entry-spacing
+ {\begin{list}{}{%
+  \setlength{\itemindent}{0pt}
+  \setlength{\leftmargin}{0pt}
+  \setlength{\parsep}{0pt}
+  % turn on hanging indent if param 1 is 1
+  \ifodd #1
+   \setlength{\leftmargin}{\cslhangindent}
+   \setlength{\itemindent}{-1\cslhangindent}
+  \fi
+  % set entry spacing
+  \setlength{\itemsep}{#2\baselineskip}}}
+ {\end{list}}
+\usepackage{calc}
+\newcommand{\CSLBlock}[1]{\hfill\break\parbox[t]{\linewidth}{\strut\ignorespaces#1\strut}}
+\newcommand{\CSLLeftMargin}[1]{\parbox[t]{\csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLRightInline}[1]{\parbox[t]{\linewidth - \csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLIndent}[1]{\hspace{\cslhangindent}#1}
 
 \KOMAoption{captions}{tableheading}
 \makeatletter
@@ -156,17 +189,30 @@
 \title{Semantic and Network Relationships in Wikipedia's Ancient Battle
 Articles}
 \author{John Grace}
-\date{2026-11-20}
+\date{2026-11-21}
 
 \begin{document}
 \maketitle
 \begin{abstract}
 This study investigates the relationship between semantic similarity and
-hyperlink network proximity among Wikipedia articles concerning ancient
-battles and their historical context. Using Latent Dirichlet Allocation
-(LDA), articles are represented as probability distributions over latent
-topics. These representations are compared with distances derived from
-Wikipedia's hyperlink network.
+hyperlink network proximity among Wikipedia articles concerning battles
+of antiquity and their historical context. A corpus of 9,015 Wikipedia
+articles was collected using 432 original battle articles as seed pages
+and their linked context articles. Latent Dirichlet Allocation (LDA) was
+used to represent each article as a probability distribution across 15
+latent topics. Semantic divergence between articles was measured using
+symmetric Kullback-Leibler (KL) divergence, while network proximity was
+measured using shortest directed paths through the Wikipedia hyperlink
+network. The analysis examined 4,729,097 reachable source-target article
+pairs originating from 432 battle articles and a reproducible random
+sample of 100 context articles. Results showed a weak positive
+correlation (r = 0.232) between network distance and semantic
+divergence, suggesting that articles separated by shorter hyperlink
+paths tend to have more similar topic distributions. These findings
+indicate that Wikipedia's hyperlink structure reflects some aspects of
+the semantic organization of its articles, although the relationship is
+not uniform and network proximity alone provides a limited indication of
+semantic similarity.
 \end{abstract}
 
 
@@ -286,6 +332,65 @@ differences between articles, we can explore whether articles that are
 closely connected through hyperlinks also tend to cover similar subject
 matter.
 
+\section{Literature Review}\label{literature-review}
+
+\subsubsection{Latent Dirichlet
+Allocation}\label{latent-dirichlet-allocation}
+
+This 2003 paper Blei, Ng, and Jordan (2003) lays out the application of
+Latent Dirichlet Allocation(LDA) on machine learning. In particular, it
+lays out how a LDA can be used for machine learning to develop a model
+over a collection of documents. The paper describes the strengths that
+LDA has over other earlier models like probabilistic LSI (pLSI). This is
+the foundation of my use of LDA in this project to build out a topic
+model from the wikipedia corpus that is constructed around the battles
+of antiquity
+
+\subsubsection{Authoritative Sources in a Hyperlinked
+Environment}\label{authoritative-sources-in-a-hyperlinked-environment}
+
+Kleinberg's 1999 paper Kleinberg (1999) examines how hyperlink
+structures can provide information about the relationships between web
+pages. It introduces the HITS algorithm, which identifies authoritative
+pages and the hub pages that connect them within a hyperlink network.
+Although this research focuses on identifying important pages rather
+than directly measuring semantic similarity, it establishes the idea
+that hyperlinks contain meaningful structural information about how
+topics and information are connected. This provides a theoretical
+foundation for treating Wikipedia articles as nodes in a directed
+network and examining the relationships between them through their
+hyperlinks.
+
+\subsubsection{Wikipedias: Collaborative Web-Based Encyclopedias as
+Complex
+Networks}\label{wikipedias-collaborative-web-based-encyclopedias-as-complex-networks}
+
+Zlatic and colleagues' 2006 paper Zlatić et al. (2006) examines
+Wikipedia editions through the framework of complex network analysis.
+The authors treat Wikipedia articles as nodes and hyperlinks as directed
+connections, investigating structural properties of the resulting
+networks. Their work provides a direct precedent for analyzing Wikipedia
+as a complex network rather than simply as a collection of independent
+articles. This is particularly relevant to this project because I use
+the same general approach to construct a directed network of ancient
+battle articles and their historical context, then examine the shortest
+paths connecting them.
+
+\subsubsection{Mining Meaning from
+Wikipedia}\label{mining-meaning-from-wikipedia}
+
+Medelyan and colleagues' 2009 paper Medelyan et al. (2009) reviews the
+use of Wikipedia as a resource for extracting concepts, relationships,
+and structured knowledge. The authors discuss how Wikipedia's article
+content and internal relationships can be used for tasks such as natural
+language processing, information retrieval, and ontology construction.
+This is relevant to this research because it supports the idea that
+Wikipedia contains value beyond its individual article descriptions. Its
+interconnected content can also be used to study how knowledge is
+represented and organized. this project builds on this perspective by
+combining the text of Wikipedia articles with their hyperlink
+relationships to examine the organization of historical knowledge.
+
 \section{Data Collection}\label{data-collection}
 
 \subsection{Seed Article Selection}\label{seed-article-selection}
@@ -381,7 +486,7 @@ spark cluster. This will remain true for the following sections and will
 be repeated.
 
 \subsection{Latent Dirichlet
-Allocation}\label{latent-dirichlet-allocation}
+Allocation}\label{latent-dirichlet-allocation-1}
 
 I used Latent Dirichlet Allocation (LDA) to identify recurring themes
 across the 9,015 articles. After tokenizing the text and removing
@@ -420,22 +525,28 @@ expanded, but also catagorized differently as it expanded.
 
 After reviewing the individual topics, I wanted to examine how the
 topics related to one another. This step compares the topics themselves
-using Kullback-Leibler (KL) divergence. Each LDA topic can be
+using symmetric Kullback-Leibler (KL) divergence. Each LDA topic can be
 represented as a probability distribution over the vocabulary, where
 each word is assigned a probability based on its importance within that
-topic. KL divergence provides a way to measure how different two
-probability distributions are.
+topic. Symmetric KL divergence provides a way to measure how different
+two probability distributions are by combining the divergence in both
+directions.
 
-Mathematically, the KL divergence between two topic distributions \(P\)
-and \(Q\) is calculated as:
+Mathematically, the symmetric KL divergence between two topic
+distributions \(P\) and \(Q\) is calculated by adding the KL divergence
+from \(P\) to \(Q\) and the KL divergence from \(Q\) to \(P\):
 
 \[
-D_{KL}(P\|Q)=\sum_{w\in V}P(w)\log\left(\frac{P(w)}{Q(w)}\right)
+D_{\mathrm{sym}}(P,Q) =
+D_{\mathrm{KL}}(P \parallel Q) +
+D_{\mathrm{KL}}(Q \parallel P)
 \]
 
 Here, \(P(w)\) and \(Q(w)\) represent the probabilities assigned to a
 particular word \(w\) by two different topics, and \(V\) represents the
-model's vocabulary.
+model's vocabulary. A lower symmetric KL divergence indicates that two
+topics have more similar word distributions, while a higher value
+indicates greater divergence between them.
 
 \subsection{Hyperlink Network
 Construction}\label{hyperlink-network-construction}
@@ -678,12 +789,12 @@ linked articles off of those 432 battle articles.
 
 \end{figure}%
 
-Figure \textbf{?@fig-average-topic-probability-depth} compares the
-average probability assigned to each of the 15 LDA topics among original
-battle articles and linked context articles. This provides a more
-detailed view of how the thematic composition of the two groups differs.
-The initial battle list has a much great concentration in a single topic
-(topic 3) than the depth 1 context articles.
+The above figure compares the average probability assigned to each of
+the 15 LDA topics among original battle articles and linked context
+articles. This provides a more detailed view of how the thematic
+composition of the two groups differs. The initial battle list has a
+much great concentration in a single topic (topic 3) than the depth 1
+context articles.
 
 \subsubsection{Topic Coherence}\label{topic-coherence}
 
@@ -773,12 +884,12 @@ at least one incoming hyperlink.
 To visualize the structure of the network, I selected the 300 articles
 with the highest total degree, calculated as the sum of each article's
 incoming and outgoing connections in the full network. I then extracted
-the hyperlinks connecting these selected articles to one another. Figure
-\textbf{?@fig-wikipedia-network} shows the resulting subnetwork, with
-original battle articles (crawl depth 0) displayed in red and additional
-context articles (crawl depth 1) displayed in orange. Node selection was
-based on connections in the full network, while the visualization
-displays only connections between the 300 selected articles.
+the hyperlinks connecting these selected articles to one another. The
+above figure shows the resulting subnetwork, with original battle
+articles (crawl depth 0) displayed in red and additional context
+articles (crawl depth 1) displayed in orange. Node selection was based
+on connections in the full network, while the visualization displays
+only connections between the 300 selected articles.
 
 \begin{figure}[H]
 
@@ -904,14 +1015,13 @@ points.
 \subsection{Topic Similarity}\label{topic-similarity}
 
 The pairwise symmetric KL divergence values for all 15 LDA topics are
-presented in Figure \textbf{?@fig-topic-kl-heatmap}. Each cell
-represents the divergence between a pair of topics, with the numerical
-values displayed directly in the heatmap. The color scale provides a
-visual representation of the divergence values, with lighter colors
-indicating lower divergence and darker colors indicating higher
-divergence. The matrix includes comparisons between every topic,
-providing an overview of the semantic differences across the full set of
-LDA topics.
+presented in the below figure. Each cell represents the divergence
+between a pair of topics, with the numerical values displayed directly
+in the heatmap. The color scale provides a visual representation of the
+divergence values, with lighter colors indicating lower divergence and
+darker colors indicating higher divergence. The matrix includes
+comparisons between every topic, providing an overview of the semantic
+differences across the full set of LDA topics.
 
 \begin{figure}[H]
 
@@ -931,9 +1041,8 @@ based on KL divergence. The lowest divergence was observed between
 Topics 7 and 9 (1.2587), followed by Topics 2 and 11 (1.4855) and Topics
 2 and 4 (1.5519). The network contained 15 topic nodes and 21 unique
 connections, with edge thickness representing the relative divergence
-between connected topics. Figure \textbf{?@fig-topic-similarity-network}
-presents the resulting network, with the topic labels provided in the
-legend.
+between connected topics. The figure below presents the resulting
+network, with the topic labels provided in the legend.
 
 \begin{figure}[H]
 
@@ -994,11 +1103,11 @@ detail about the variation within those distances.
 
 \end{figure}%
 
-Figure \textbf{?@fig-semantic-divergence-ecdf} compares the cumulative
-distributions of symmetric KL divergence across shortest directed
-network distances. The horizontal axis represents semantic divergence,
-while the vertical axis shows the cumulative proportion of article pairs
-with a divergence less than or equal to each value.
+Above compares the cumulative distributions of symmetric KL divergence
+across shortest directed network distances. The horizontal axis
+represents semantic divergence, while the vertical axis shows the
+cumulative proportion of article pairs with a divergence less than or
+equal to each value.
 
 The distributions show a noticeable difference between shorter and
 longer network distances. At distance 1, approximately 60\% of article
@@ -1017,6 +1126,19 @@ with each additional hyperlink. The variation within each distance group
 also shows that network proximity does not fully determine the semantic
 relationship between two articles.
 
+\subsubsection{Correlation Between Network Distance and Semantic
+Divergence}\label{correlation-between-network-distance-and-semantic-divergence}
+
+To quantify the overall relationship between network distance and
+semantic divergence, I calculated the Pearson correlation coefficient
+across all reachable source-target article pairs. Across 4,729,097
+article pairs, the resulting correlation was 0.232, indicating a weak
+positive linear association between shortest-path distance and symmetric
+KL divergence. This suggests that articles separated by longer paths in
+the hyperlink network tend to exhibit greater semantic divergence,
+although network distance alone does not strongly explain differences in
+semantic similarity.
+
 \subsubsection{Article-Level
 Differences}\label{article-level-differences}
 
@@ -1032,15 +1154,6 @@ articles reachable from each source.
 }
 
 \caption{Average divergence by source}
-
-\end{figure}%%
-\begin{figure}[H]
-
-{\centering \includegraphics{../images/source_reachability_vs_divergence.png}
-
-}
-
-\caption{Source reachability and divergence}
 
 \end{figure}%
 
@@ -1058,12 +1171,12 @@ short network paths}
 
 \end{figure}%
 
-Figure \textbf{?@fig-high-kl-short-paths} shows five article pairs with
-relatively short directed paths but high symmetric KL divergence.
-Although these articles are connected through only a small number of
-hyperlinks, their LDA topic distributions are substantially different.
-The highlighted paths illustrate that close network connections do not
-necessarily correspond to strong semantic similarity.
+The figure above shows five article pairs with relatively short directed
+paths but high symmetric KL divergence. Although these articles are
+connected through only a small number of hyperlinks, their LDA topic
+distributions are substantially different. The highlighted paths
+illustrate that close network connections do not necessarily correspond
+to strong semantic similarity.
 
 \begin{figure}[H]
 
@@ -1076,23 +1189,193 @@ network paths}
 
 \end{figure}%
 
-Figure \textbf{?@fig-low-kl-long-paths} shows five article pairs with
-relatively long directed paths but low symmetric KL divergence. Despite
-requiring several hyperlinks to connect the source and target articles,
-these pairs have relatively similar LDA topic distributions. This
-illustrates that articles can be semantically similar even when they are
-not closely connected in the hyperlink network.
+The above figure shows five article pairs with relatively long directed
+paths but low symmetric KL divergence. Despite requiring several
+hyperlinks to connect the source and target articles, these pairs have
+relatively similar LDA topic distributions. This illustrates that
+articles can be semantically similar even when they are not closely
+connected in the hyperlink network.
 
-\section{Discussion}\label{discussion}
+\section{Conclusion}\label{conclusion}
+
+The above results provide showcase how Wikipedia's hyperlink structure
+softly reflects the semantic relationships between articles about
+ancient battles and their historical context. By comparing article level
+topic distributions with shortest path distances in the hyperlink
+network, this study examined whether articles that are more closely
+connected through hyperlinks also tend to cover more similar subject
+matter. The primary finding is that semantic divergence loosely
+increases with shortest path distance in Wikipedia's hyperlink network.
+This relationship is relatively weak, as the observed correlation of
+0.232 suggests that network distance explains only a limited part of the
+variation in semantic divergence. Articles separated by shorter network
+paths tend to exhibit more similar topic distributions, while articles
+separated by longer paths generally demonstrate greater semantic
+divergence. This suggests that Wikipedia's hyperlink structure captures
+some degree of the underlying semantic organization of its articles,
+although the relationship is not uniform across all article pairs.
 
 \subsection{Interpretation of
 Findings}\label{interpretation-of-findings}
 
+The results demonstrate that Wikipedia's ancient battle articles contain
+recognizable thematic patterns, while also exhibiting an uneven
+distribution of structural prominence within the hyperlink network. The
+LDA model identified 15 topics, 12 of which exhibited positive coherence
+scores. Several topics also contained collections of words that were
+readily interpretable in historical and geographic contexts, including
+themes associated with Iranian and Chinese warfare, as well as naval
+conflicts. This suggests that the topic model was able to identify
+meaningful patterns in the corpus, organizing articles around recurring
+historical subjects rather than producing entirely arbitrary word
+groupings. However, the presence of three topics with non-positive
+coherence also illustrates that not every topic was equally
+interpretable, highlighting the limitations of representing a diverse
+historical corpus through a fixed number of latent topics.
+
+The network analysis revealed a notable concentration of Roman related
+articles among the highly connected context articles (depth 1). Articles
+concerning Roman history occupied particularly prominent positions
+across the degree centrality measures, suggesting that Roman related
+subjects were among the most extensively connected articles in the
+collected network. This is perhaps unsurprising given that many of the
+originating battle articles were situated within or around the
+historical territorial extent of the Roman Empire. The resulting
+collection of articles therefore contains numerous connections to Roman
+military, political, geographic, and historical subjects. This
+illustrates how the the corpus of battles in english language wikipedia
+from the years 300 bce to 500 ce is heavily tilted towards a roman
+centric framework. This emphasis may reflect the greater availability of
+surviving Roman historical sources, the influence of established Western
+historical scholarship, or the interests and priorities of Wikipedia's
+editors and contributors. Although the present analysis does not
+establish the cause of this imbalance, it highlights the prominence of
+Rome in the representation of ancient military history within
+English-language Wikipedia.
+
+Examining the article pairs with the greatest semantic divergence also
+revealed a potentially interesting geographic pattern. Some of the
+largest differences occurred between battles associated with Imperial
+China and those associated with the Roman Empire. This raises the
+possibility that geographic separation contributes to the semantic
+differences observed between articles, particularly when comparing
+historical events from distinct cultural and political regions. However,
+the present analysis does not directly test this relationship, making
+geography a potentially valuable additional dimension for future
+research.
+
 \subsection{Limitations}\label{limitations}
 
-\section{Conclusion}\label{conclusion}
+As mentioned through out the paper, scalability was a constant concern,
+so the above analysis was completed with limited computing power with
+eventual expansion built into the structure. Since computing power was
+limited however, their are some very straight forward limitations to
+this research
+
+\subsubsection{Article Depth}\label{article-depth}
+
+Wikipedia articles were only scraped at 1 depth away from the battle
+articles, this meant that the LDA topic model corpus remained relatively
+focused on the historical context around the battles. This also
+influenced the shortest path as deeper depths could have potentially
+created pathways for more connectivity
+
+\subsubsection{Topic Model
+Representation}\label{topic-model-representation}
+
+The semantic comparisons in this study rely on topic distributions
+generated through LDA using 15 topics. While the resulting model
+identified several interpretable themes, this representation necessarily
+simplifies the underlying content of each article. Articles may share
+important historical, geographic, or contextual relationships that are
+not fully reflected in their topic distributions. Similarly, two
+articles may receive similar topic distributions despite discussing
+different historical events. With additional computing resources, future
+iterations of this analysis could explore models with a larger number of
+topics to determine whether more granular thematic distinctions improve
+the representation of the corpus.
+
+Relatedly, the selection of 15 topics was not determined through a
+systematic optimization process based on topic coherence. Instead, this
+number was selected with consideration for the intended level of
+thematic granularity and approaches used in related research. Although
+the resulting model produced several interpretable topics, a more
+systematic evaluation of different topic counts could provide a stronger
+basis for model selection. Future work could evaluate models across a
+range of topic counts using coherence metrics, alongside qualitative
+assessments of topic interpretability, to identify a configuration that
+better balances thematic specificity and coherence.
+
+\subsubsection{Shortest Paths and KL
+Divergence}\label{shortest-paths-and-kl-divergence}
+
+Due to computation constrants, rather than calculating shortest paths
+from all 9,015 articles, I used all 432 original battle articles and a
+reproducible random sample of 100 depth 1 context articles as sources.
+All 9,015 articles remained available as potential destinations and
+intermediate nodess. The project was designed in such a way however that
+as more computing power is added a larger number of samples could be
+selected or potentially the full set of article pairs could be
+calculated.
+
+\subsection{Future Work}\label{future-work}
+
+There are many areas that would compliment and build off of this
+analysis. As mentioned earlier, bringing in a geospatial component as an
+additional distance measure, so that not only are the battle articles
+compared based on their network distance and semantic difference, but
+also there physical difference. This would allow for insight into if
+certain geographical areas are more prominent in Wikipedias hyperlink
+network related to the battles of antiquity. It would also highlight
+potential connections for how certain areas of the world are presented
+compared to others when thinking about the semantic layer.
+
+However, the most obvious additional work would be expanding the corpus
+of wikipedia articles in the network. the structure of this research was
+explicitly designed with this in mind, so that additional depths of
+articles could be scrapped and pulled into the network. Then it could be
+further analysised by the cluster to rerun the LDA topic model and all
+futher analysis such as the shortest path distances and semetric KL
+divergences calculated between articles.
+
+Finally, the corpus could be expanded beyond the historical period
+examined in this study. Incorporating battles from earlier or more
+recent periods would allow for comparisons of how military history is
+represented across different historical eras. In particular, including
+more modern conflicts could provide insight into how increased
+historical documentation and the availability of contemporary sources
+influence the thematic and network structures of Wikipedia articles.
+This would extend the analysis beyond the representation of ancient
+history and provide a broader perspective on how historical knowledge is
+organized within the wikipedia.
 
 \section{References}\label{references}
+
+\phantomsection\label{refs}
+\begin{CSLReferences}{1}{0}
+\bibitem[\citeproctext]{ref-blei2003latent}
+Blei, David M., Andrew Y. Ng, and Michael I. Jordan. 2003. {``Latent
+Dirichlet Allocation.''} \emph{Journal of Machine Learning Research} 3:
+993--1022.
+
+\bibitem[\citeproctext]{ref-kleinberg1999authoritative}
+Kleinberg, Jon M. 1999. {``Authoritative Sources in a Hyperlinked
+Environment.''} \emph{Journal of the ACM} 46 (5): 604--32.
+\url{https://doi.org/10.1145/324133.324140}.
+
+\bibitem[\citeproctext]{ref-medelyan2009mining}
+Medelyan, Olena, David Milne, Catherine Legg, and Ian H. Witten. 2009.
+{``Mining Meaning from Wikipedia.''} \emph{International Journal of
+Human-Computer Studies} 67 (9): 716--54.
+\url{https://doi.org/10.1016/j.ijhcs.2009.05.004}.
+
+\bibitem[\citeproctext]{ref-zlatic2006wikipedias}
+Zlatić, Vinko, Mirta Božičević, Hrvoje Štefančić, and Miro Domazet.
+2006. {``Wikipedias: Collaborative Web-Based Encyclopedias as Complex
+Networks.''} \emph{Physical Review E} 74 (1): 016115.
+\url{https://doi.org/10.1103/PhysRevE.74.016115}.
+
+\end{CSLReferences}
 
 \section{Appendix A: Complete LDA Topic
 Visualizations}\label{appendix-a-complete-lda-topic-visualizations}

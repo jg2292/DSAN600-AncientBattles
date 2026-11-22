@@ -78,21 +78,21 @@ Topic modeling provides a way to measure how similar two articles are in terms o
 
 # Literature Review
 
-### Latent Dirichlet Allocation @blei2003latent
+### Latent Dirichlet Allocation 
 
-This 2003 paper lays out the application of Latent Dirichlet Allocation(LDA) on machine learning.  In particular, it lays out how a LDA can be used for machine learning to develop a model over a collection of documents. The paper describes the strengths that LDA has over other earlier models like probabilistic LSI (pLSI). This is the foundation of my use of LDA in this project to build out a topic model from the wikipedia corpus that is constructed around the battles of antiquity
+This 2003 paper @blei2003latent lays out the application of Latent Dirichlet Allocation(LDA) on machine learning.  In particular, it lays out how a LDA can be used for machine learning to develop a model over a collection of documents. The paper describes the strengths that LDA has over other earlier models like probabilistic LSI (pLSI). This is the foundation of my use of LDA in this project to build out a topic model from the wikipedia corpus that is constructed around the battles of antiquity
 
-### Authoritative Sources in a Hyperlinked Environment @kleinberg1999authoritative
+### Authoritative Sources in a Hyperlinked Environment 
 
-Kleinberg's 1999 paper examines how hyperlink structures can provide information about the relationships between web pages. It introduces the HITS algorithm, which identifies authoritative pages and the hub pages that connect them within a hyperlink network. Although this research focuses on identifying important pages rather than directly measuring semantic similarity, it establishes the idea that hyperlinks contain meaningful structural information about how topics and information are connected. This provides a theoretical foundation for treating Wikipedia articles as nodes in a directed network and examining the relationships between them through their hyperlinks.
+Kleinberg's 1999 paper @kleinberg1999authoritative examines how hyperlink structures can provide information about the relationships between web pages. It introduces the HITS algorithm, which identifies authoritative pages and the hub pages that connect them within a hyperlink network. Although this research focuses on identifying important pages rather than directly measuring semantic similarity, it establishes the idea that hyperlinks contain meaningful structural information about how topics and information are connected. This provides a theoretical foundation for treating Wikipedia articles as nodes in a directed network and examining the relationships between them through their hyperlinks.
 
-### Wikipedias: Collaborative Web-Based Encyclopedias as Complex Networks @zlatic2006wikipedias
+### Wikipedias: Collaborative Web-Based Encyclopedias as Complex Networks
 
-Zlatic and colleagues' 2006 paper examines Wikipedia editions through the framework of complex network analysis. The authors treat Wikipedia articles as nodes and hyperlinks as directed connections, investigating structural properties of the resulting networks. Their work provides a direct precedent for analyzing Wikipedia as a complex network rather than simply as a collection of independent articles. This is particularly relevant to this project because I use the same general approach to construct a directed network of ancient battle articles and their historical context, then examine the shortest paths connecting them.
+Zlatic and colleagues' 2006 paper @zlatic2006wikipedias examines Wikipedia editions through the framework of complex network analysis. The authors treat Wikipedia articles as nodes and hyperlinks as directed connections, investigating structural properties of the resulting networks. Their work provides a direct precedent for analyzing Wikipedia as a complex network rather than simply as a collection of independent articles. This is particularly relevant to this project because I use the same general approach to construct a directed network of ancient battle articles and their historical context, then examine the shortest paths connecting them.
 
-### Mining Meaning from Wikipedia @medelyan2009mining
+### Mining Meaning from Wikipedia 
 
-Medelyan and colleagues' 2009 paper reviews the use of Wikipedia as a resource for extracting concepts, relationships, and structured knowledge. The authors discuss how Wikipedia's article content and internal relationships can be used for tasks such as natural language processing, information retrieval, and ontology construction. This is relevant to this research because it supports the idea that Wikipedia contains value beyond its individual article descriptions. Its interconnected content can also be used to study how knowledge is represented and organized. this project builds on this perspective by combining the text of Wikipedia articles with their hyperlink relationships to examine the organization of historical knowledge.
+Medelyan and colleagues' 2009 paper @medelyan2009mining reviews the use of Wikipedia as a resource for extracting concepts, relationships, and structured knowledge. The authors discuss how Wikipedia's article content and internal relationships can be used for tasks such as natural language processing, information retrieval, and ontology construction. This is relevant to this research because it supports the idea that Wikipedia contains value beyond its individual article descriptions. Its interconnected content can also be used to study how knowledge is represented and organized. this project builds on this perspective by combining the text of Wikipedia articles with their hyperlink relationships to examine the organization of historical knowledge.
 
 
 # Data Collection
@@ -148,9 +148,12 @@ After reviewing the individual topics, I wanted to examine how the topics relate
 
 Mathematically, the symmetric KL divergence between two topic distributions $P$ and $Q$ is calculated by adding the KL divergence from $P$ to $Q$ and the KL divergence from $Q$ to $P$:
 
-$$\
-D\_}(P,Q) = D\_(P|Q) + D\_(Q|P)\
 $$
+D_{\mathrm{sym}}(P,Q) =
+D_{\mathrm{KL}}(P \parallel Q) +
+D_{\mathrm{KL}}(Q \parallel P)
+$$
+
 
 Here, $P(w)$ and $Q(w)$ represent the probabilities assigned to a particular word $w$ by two different topics, and $V$ represents the model's vocabulary. A lower symmetric KL divergence indicates that two topics have more similar word distributions, while a higher value indicates greater divergence between them.
 
@@ -389,6 +392,9 @@ However, the most obvious additional work would be expanding the corpus of wikip
 Finally, the corpus could be expanded beyond the historical period examined in this study. Incorporating battles from earlier or more recent periods would allow for comparisons of how military history is represented across different historical eras. In particular, including more modern conflicts could provide insight into how increased historical documentation and the availability of contemporary sources influence the thematic and network structures of Wikipedia articles. This would extend the analysis beyond the representation of ancient history and provide a broader perspective on how historical knowledge is organized within the wikipedia.
 
 # References
+
+::: {#refs}
+:::
 
 
 # Appendix A: Complete LDA Topic Visualizations
